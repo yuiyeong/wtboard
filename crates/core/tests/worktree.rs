@@ -126,3 +126,17 @@ fn moving_fork_point_recomputes_from_merge_base() {
     assert_eq!(ev.scope, ChangeScope::Base);
     assert_eq!(paths(&wt), ["feat.txt"]); // up.txt는 base에도 있으므로 변경 아님
 }
+
+#[test]
+fn huge_event_batches_fall_back_to_full_list() {
+    // 큰 레포에서 브랜치를 바꾸면 수만 개 경로가 한 batch로 온다. 경로를 argv로 넘기면 E2BIG
+    let repo = feat_repo();
+    let wt = open(&repo);
+    repo.write("src/a.py", "a = 2\n");
+    let mut targets: Vec<Target> =
+        (0..40_000).map(|i| file(&format!("generated/deeply/nested/dir/file_{i:05}.txt"))).collect();
+    targets.push(file("src/a.py"));
+    let ev = wt.handle(&targets).unwrap().expect("should emit");
+    assert_eq!(ev.scope, ChangeScope::List);
+    assert_eq!(paths(&wt), ["src/a.py"]);
+}

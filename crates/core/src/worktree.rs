@@ -51,6 +51,9 @@ pub struct WorktreeSummary {
     pub changed_files: usize,
 }
 
+/// 한 번의 git 호출에 pathspec으로 넘길 최대 경로 수
+const MAX_PATHS_PER_BATCH: usize = 200;
+
 struct State {
     base: String,
     merge_base: String,
@@ -133,11 +136,18 @@ impl Worktree {
             .collect();
         paths.sort();
         paths.dedup();
+        // 브랜치 전환 등으로 경로가 아주 많으면 argv 한계(E2BIG)에 걸린다. 목록 전체를 다시 계산하고,
+        // hash 비교는 화면이 본 파일로만 좁힌다.
+        let too_many = paths.len() > MAX_PATHS_PER_BATCH;
+        if too_many {
+            let st = self.state.lock().unwrap();
+            paths.retain(|p| st.hashes.contains_key(p));
+        }
 
         let mut events = Vec::new();
         if targets.contains(&Target::Base) {
             events.push(self.refresh_base()?);
-        } else if targets.contains(&Target::List) {
+        } else if too_many || targets.contains(&Target::List) {
             events.push(self.refresh_list()?);
         }
         // 목록 재계산은 status/+- 만 비교하므로, 같은 묶음의 파일 event는 hash 비교를 따로 한다
@@ -204,7 +214,8 @@ impl Worktree {
             return self.refresh_list();
         }
 
-        let mut changed = Vec::new();
+        // 계산을 모두 끝낸 뒤에 state를 바꾼다. 도중에 git이 실패해도 state와 화면이 어긋나지 않는다.
+        let mut updates = Vec::new();
         for p in paths {
             let after = fresh.get(p);
             let mut differs = st.files.get(p) != after;
@@ -214,17 +225,21 @@ impl Worktree {
                 }
             }
             if differs {
-                st.hashes.remove(p);
-                match after {
-                    Some(f) => {
-                        st.files.insert(p.clone(), f.clone());
-                    }
-                    None => {
-                        st.files.remove(p);
-                    }
-                }
-                changed.push(p.clone());
+                updates.push((p.clone(), after.cloned()));
             }
+        }
+        let mut changed = Vec::new();
+        for (p, after) in updates {
+            st.hashes.remove(&p);
+            match after {
+                Some(f) => {
+                    st.files.insert(p.clone(), f);
+                }
+                None => {
+                    st.files.remove(&p);
+                }
+            }
+            changed.push(p);
         }
         Ok((!changed.is_empty()).then(|| self.event(ChangeScope::File, changed)))
     }
