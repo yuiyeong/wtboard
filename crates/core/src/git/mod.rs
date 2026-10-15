@@ -84,10 +84,10 @@ impl Git {
             .spawn()?;
         // 입력을 다 쓰기 전에 stdout pipe가 차면 git이 멈춘다. 쓰기는 따로 한다
         let mut stdin = child.stdin.take().expect("stdin is piped");
-        let input = input.to_vec();
-        let writer = std::thread::spawn(move || stdin.write_all(&input));
-        let out = child.wait_with_output()?;
-        let _ = writer.join();
+        let out = std::thread::scope(|s| {
+            s.spawn(move || stdin.write_all(input));
+            child.wait_with_output()
+        })?;
         finish(args, out, &[0])
     }
 
