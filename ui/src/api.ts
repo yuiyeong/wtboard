@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 
 export type FileStatus = 'added' | 'modified' | 'deleted' | 'untracked';
+export type Profile = 'flutter' | 'node' | 'python' | 'default';
+export type BaseSource = 'config' | 'pr' | 'origin';
 
 export interface ChangedFile {
   path: string;
@@ -8,6 +10,8 @@ export interface ChangedFile {
   /** null이면 바이너리 (또는 1MB 넘는 untracked) */
   additions: number | null;
   deletions: number | null;
+  /** 생성·lock 파일. 펼치기 전에는 diff를 계산하지 않는다 */
+  collapsed: boolean;
 }
 
 export type PatchBody =
@@ -26,12 +30,35 @@ export interface WorktreeSummary {
   path: string;
   branch: string | null;
   base: string;
+  baseSource: BaseSource;
   changedFiles: number;
+  profile: Profile;
+  /** Unix ms. 앱이 마지막으로 변경을 알린 시각 */
+  lastChangedAt: number | null;
+  /** 목록 계산이 느릴 때만 값이 있다 */
+  slowListMs: number | null;
+  fsmonitor: boolean;
+  /** 열지 못한 이유 */
+  error: string | null;
 }
 
 export interface RepoSummary {
+  id: string;
   name: string;
+  profile: Profile;
   worktrees: WorktreeSummary[];
+}
+
+export interface EntryError {
+  path: string;
+  message: string;
+}
+
+export interface ReposResponse {
+  /** false면 아직 레포를 여는 중 */
+  ready: boolean;
+  repos: RepoSummary[];
+  errors: EntryError[];
 }
 
 export type View = 'branch';
@@ -42,7 +69,7 @@ export interface WorktreeChanged {
   scope: 'file' | 'list' | 'base';
 }
 
-export const listRepos = () => invoke<RepoSummary[]>('list_repos');
+export const listRepos = () => invoke<ReposResponse>('list_repos');
 
 export const listFiles = (worktreeId: string, view: View) =>
   invoke<ChangedFile[]>('list_files', { worktreeId, view });

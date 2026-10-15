@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ChangedFile } from '../api';
 import { buildTree, flattenFiles, type TreeNode } from './tree';
 
-const f = (path: string): ChangedFile => ({ path, status: 'modified', additions: 1, deletions: 0 });
+const f = (path: string): ChangedFile => ({ path, status: 'modified', additions: 1, deletions: 0, collapsed: false });
 
 /** 테스트용 요약: 디렉터리는 'name/', 파일은 이름 */
 function shape(nodes: TreeNode[]): unknown[] {
