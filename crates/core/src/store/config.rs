@@ -33,7 +33,7 @@ pub struct WatchConfig {
 }
 
 /// 0 같은 값이면 worker가 쉬지 않고 재계산한다
-pub const MIN_POLL_SECS: u64 = 5;
+const MIN_POLL_SECS: u64 = 5;
 
 impl WatchConfig {
     pub fn poll_interval(&self) -> Duration {

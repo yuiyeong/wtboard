@@ -1,6 +1,5 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
@@ -87,7 +86,7 @@ fn main() {
                     let emit: EmitFn = Arc::new(move |ev: WorktreeChanged| {
                         let _ = handle.emit("worktree-changed", ev);
                     });
-                    let poll = Duration::from_secs(config.watch.fallback_poll_secs);
+                    let poll = config.watch.poll_interval();
                     match spawn_watcher(wt.clone(), poll, emit) {
                         Ok(w) => (Ok(wt), Some(w)),
                         Err(e) => (Err(format!("파일 감시를 시작할 수 없음: {e}")), None),
