@@ -5,9 +5,9 @@ pub use watcher::{spawn_watcher, spawn_watcher_with, EmitFn, GoneFn, WatchHandle
 use std::path::{Component, Path, PathBuf};
 
 use notify::RecursiveMode;
-use unicode_normalization::UnicodeNormalization;
 
 use crate::git::{Git, GitError};
+use crate::paths::{canonical, nfc};
 use crate::profile::Excludes;
 
 /// FS event 경로 하나가 요구하는 재계산 범위
@@ -126,14 +126,4 @@ fn first(rel: &Path) -> Option<&str> {
 /// git 내부 lock 파일 (`index.lock`, `refs/heads/x.lock`). 작업 폴더에는 적용하지 않는다.
 fn is_lock(rel: &Path) -> bool {
     rel.extension().is_some_and(|e| e == "lock")
-}
-
-pub(crate) fn canonical(p: impl AsRef<Path>) -> PathBuf {
-    let p = p.as_ref();
-    nfc(&p.canonicalize().unwrap_or_else(|_| p.to_path_buf()))
-}
-
-/// macOS FSEvents는 NFD 경로를 줄 수 있고 git(core.precomposeUnicode)은 NFC를 쓴다
-pub(crate) fn nfc(path: &Path) -> PathBuf {
-    PathBuf::from(path.to_string_lossy().nfc().collect::<String>())
 }

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use super::{Git, GitError};
-use crate::watch::canonical;
+use crate::paths::canonical;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeEntry {

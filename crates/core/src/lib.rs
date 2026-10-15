@@ -3,6 +3,7 @@ pub mod gh;
 pub mod git;
 pub mod store;
 pub mod domain;
+pub mod paths;
 pub mod profile;
 pub mod watch;
 pub mod worktree;
