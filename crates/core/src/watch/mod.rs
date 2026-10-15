@@ -1,5 +1,7 @@
+mod repo_watcher;
 mod watcher;
 
+pub use repo_watcher::{spawn_repo_watcher, RediscoverFn, RepoWatchHandle};
 pub use watcher::{spawn_watcher, spawn_watcher_with, EmitFn, GoneFn, WatchHandle};
 
 use std::path::{Component, Path, PathBuf};
