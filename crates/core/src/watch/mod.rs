@@ -14,9 +14,9 @@ use crate::git::{Git, GitError};
 pub enum Target {
     /// 작업 폴더 파일. 그 파일만 다시 계산
     File(String),
-    /// HEAD / index 변경. 파일 목록 전체 다시 계산
+    /// index 변경. 파일 목록 전체 다시 계산
     List,
-    /// refs 변경 (fetch, 커밋). merge-base부터 다시 계산
+    /// HEAD / refs 변경 (브랜치 전환, fetch, 커밋). merge-base부터 다시 계산
     Base,
     Ignore,
 }
@@ -95,7 +95,9 @@ fn classify_git_dir(rel: &Path, is_common: bool) -> Target {
         return Target::Ignore;
     }
     match first(rel) {
-        Some("HEAD" | "index") => Target::List,
+        // HEAD가 바뀌면 (브랜치 전환) merge-base가 달라질 수 있다. 그대로면 refresh_base가 목록 재계산으로 끝난다
+        Some("HEAD") => Target::Base,
+        Some("index") => Target::List,
         Some("refs" | "packed-refs") if is_common => Target::Base,
         _ => Target::Ignore,
     }

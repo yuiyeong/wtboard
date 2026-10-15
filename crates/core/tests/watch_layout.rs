@@ -24,7 +24,7 @@ fn main_worktree_classification() {
     assert_eq!(l.classify(&r.join("Cargo.lock")), file("Cargo.lock")); // 작업 폴더의 .lock은 일반 파일
     assert_eq!(l.classify(&r.join("web/node_modules/x/index.js")), Target::Ignore);
     assert_eq!(l.classify(&r.join(".git/index")), Target::List);
-    assert_eq!(l.classify(&r.join(".git/HEAD")), Target::List);
+    assert_eq!(l.classify(&r.join(".git/HEAD")), Target::Base); // 브랜치 전환 → merge-base 재계산
     assert_eq!(l.classify(&r.join(".git/index.lock")), Target::Ignore);
     assert_eq!(l.classify(&r.join(".git/refs/heads/main")), Target::Base);
     assert_eq!(l.classify(&r.join(".git/refs/remotes/origin/main")), Target::Base);
@@ -43,7 +43,7 @@ fn linked_worktree_uses_its_own_git_dir_and_shared_refs() {
     let l = layout(&wt_path);
 
     assert_ne!(l.git_dir, l.common_dir);
-    assert_eq!(l.classify(&l.git_dir.join("HEAD")), Target::List);
+    assert_eq!(l.classify(&l.git_dir.join("HEAD")), Target::Base);
     assert_eq!(l.classify(&l.git_dir.join("index")), Target::List);
     assert_eq!(l.classify(&l.common_dir.join("refs/heads/feat")), Target::Base);
     assert_eq!(l.classify(&l.common_dir.join("refs/heads/feat.lock")), Target::Ignore);
