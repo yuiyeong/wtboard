@@ -1,6 +1,6 @@
 //! 레포 하나(common dir 하나)와 그 worktree들
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -51,8 +51,8 @@ pub struct RepoSummary {
 struct Opened {
     path: PathBuf,
     branch: Option<String>,
-    result: Result<Arc<Worktree>, String>,
-    _watch: Option<WatchHandle>,
+    /// 연 worktree와 그 watcher (drop하면 감시가 멈춘다), 또는 열지 못한 이유
+    result: Result<(Arc<Worktree>, WatchHandle), String>,
 }
 
 pub struct Repo {
@@ -63,7 +63,7 @@ pub struct Repo {
     opts: RepoOptions,
     sink: Sink,
     worktrees: Mutex<Vec<Opened>>,
-    watch: Mutex<Option<RepoWatchHandle>>,
+    watch: OnceLock<RepoWatchHandle>,
 }
 
 impl Repo {
@@ -75,7 +75,7 @@ impl Repo {
             opts,
             sink,
             worktrees: Mutex::new(Vec::new()),
-            watch: Mutex::new(None),
+            watch: OnceLock::new(),
         });
         repo.rediscover()?;
         let weak = Arc::downgrade(&repo);
@@ -84,7 +84,7 @@ impl Repo {
                 r.rediscover_and_notify();
             }
         }))?;
-        *repo.watch.lock().unwrap() = Some(handle);
+        let _ = repo.watch.set(handle);
         Ok(repo)
     }
 
@@ -107,14 +107,19 @@ impl Repo {
     }
 
     pub fn summary(&self) -> RepoSummary {
-        let opened = self.worktrees.lock().unwrap();
-        let worktrees: Vec<WorktreeSummary> = opened
+        // summary는 git을 부르므로 lock 밖에서 한다 (rediscover를 막지 않게)
+        let snapshot: Vec<Result<Arc<Worktree>, WorktreeSummary>> = self
+            .worktrees
+            .lock()
+            .unwrap()
             .iter()
             .map(|o| match &o.result {
-                Ok(wt) => wt.summary(),
-                Err(e) => WorktreeSummary::failed(&o.path, o.branch.clone(), e.clone()),
+                Ok((wt, _)) => Ok(wt.clone()),
+                Err(e) => Err(WorktreeSummary::failed(&o.path, o.branch.clone(), e.clone())),
             })
             .collect();
+        let worktrees: Vec<WorktreeSummary> =
+            snapshot.into_iter().map(|r| r.map_or_else(|failed| failed, |wt| wt.summary())).collect();
         let profile = worktrees.iter().find(|w| w.error.is_none()).map_or(Profile::Default, |w| w.profile);
         RepoSummary { id: self.id.clone(), name: self.name.clone(), profile, worktrees }
     }
@@ -125,20 +130,18 @@ impl Repo {
             .unwrap()
             .iter()
             .filter_map(|o| o.result.as_ref().ok())
-            .find(|wt| wt.id() == id)
-            .cloned()
+            .find(|(wt, _)| wt.id() == id)
+            .map(|(wt, _)| wt.clone())
     }
 
     fn open_worktree(self: &Arc<Self>, entry: &WorktreeEntry) -> Opened {
         let opened = Worktree::open_with(&entry.path, self.opts.base.clone(), self.opts.gh.clone());
-        let (result, watch) = match opened {
-            Ok(wt) => match spawn_watcher_with(wt.clone(), self.opts.poll, self.sink.changed.clone(), self.on_gone()) {
-                Ok(h) => (Ok(wt), Some(h)),
-                Err(e) => (Err(format!("파일 감시를 시작할 수 없음: {e}")), None),
-            },
-            Err(e) => (Err(e.to_string()), None),
-        };
-        Opened { path: entry.path.clone(), branch: entry.branch.clone(), result, _watch: watch }
+        let result = opened.map_err(|e| e.to_string()).and_then(|wt| {
+            spawn_watcher_with(wt.clone(), self.opts.poll, self.sink.changed.clone(), self.on_gone())
+                .map(|h| (wt, h))
+                .map_err(|e| format!("파일 감시를 시작할 수 없음: {e}"))
+        });
+        Opened { path: entry.path.clone(), branch: entry.branch.clone(), result }
     }
 
     /// worktree 폴더가 사라지면 목록을 다시 읽는다. watcher worker 안에서 불리므로 새 thread에서 한다
