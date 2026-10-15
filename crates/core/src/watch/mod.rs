@@ -1,6 +1,9 @@
 mod repo_watcher;
 mod watcher;
 
+/// FS event를 묶는 시간
+const DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(300);
+
 pub use repo_watcher::{spawn_repo_watcher, RediscoverFn, RepoWatchHandle};
 pub use watcher::{spawn_watcher, spawn_watcher_with, EmitFn, GoneFn, WatchHandle};
 

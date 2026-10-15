@@ -5,14 +5,13 @@ use std::time::{Duration, Instant};
 use notify::RecommendedWatcher;
 use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, RecommendedCache};
 
-use super::Target;
+use super::{Target, DEBOUNCE};
 use crate::worktree::{Worktree, WorktreeChanged};
 
 pub type EmitFn = Arc<dyn Fn(WorktreeChanged) + Send + Sync>;
 /// worktree 폴더가 사라졌을 때 부른다 (`rm -rf`). 그 뒤 worker는 멈춘다
 pub type GoneFn = Arc<dyn Fn() + Send + Sync>;
 
-const DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// drop하면 감시가 멈추고 worker thread도 끝난다.
 pub struct WatchHandle {
