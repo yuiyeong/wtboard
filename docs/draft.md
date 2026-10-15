@@ -52,7 +52,7 @@ flowchart LR
 | 해시 | `blake3` | diff 변경 여부 비교용, 빠름 |
 | 화면 | React + TypeScript + Vite + Tailwind CSS | 익숙한 스택 |
 | 화면 상태 | TanStack Query (Tauri 명령 결과 캐시) + Zustand (선택 상태 등) | 익숙한 조합 |
-| diff 렌더링 | `react-diff-view` (+ `refractor` 하이라이팅) | split/unified 지원. 1단계에서 렌더 품질 확인 후 확정 |
+| diff 렌더링 | `react-diff-view` (+ `refractor` 하이라이팅) | split/unified 지원. 1단계에서 617개 파일 브랜치로 확인 → 확정 |
 | hook CLI | Rust 바이너리 (같은 workspace) | 실행 시간 수 ms, Claude 작업을 늦추지 않음 |
 
 ## 4. 프로젝트 구조
