@@ -1,9 +1,11 @@
+pub mod attrs;
 pub mod base;
 pub mod changes;
 pub mod patch;
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Output, Stdio};
 
 /// 사용자 gitconfig와 무관하게 출력 형식을 고정하는 공통 인자
 const GLOBAL_ARGS: &[&str] = &[
@@ -69,18 +71,39 @@ impl Git {
 
     pub fn run_allow(&self, args: &[&str], ok_codes: &[i32]) -> Result<Vec<u8>, GitError> {
         let out = self.command(args).output()?;
-        match out.status.code() {
-            Some(code) if ok_codes.contains(&code) => Ok(out.stdout),
-            code => Err(GitError::Failed {
-                args: args.join(" "),
-                code,
-                stderr: String::from_utf8_lossy(&out.stderr).trim().to_owned(),
-            }),
-        }
+        finish(args, out, ok_codes)
+    }
+
+    /// stdin으로 입력을 넘긴다 (`check-attr --stdin`)
+    pub fn run_with_input(&self, args: &[&str], input: &[u8]) -> Result<Vec<u8>, GitError> {
+        let mut child = self
+            .command(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        // 입력을 다 쓰기 전에 stdout pipe가 차면 git이 멈춘다. 쓰기는 따로 한다
+        let mut stdin = child.stdin.take().expect("stdin is piped");
+        let input = input.to_vec();
+        let writer = std::thread::spawn(move || stdin.write_all(&input));
+        let out = child.wait_with_output()?;
+        let _ = writer.join();
+        finish(args, out, &[0])
     }
 
     pub fn run_str(&self, args: &[&str]) -> Result<String, GitError> {
         let out = self.run(args)?;
         Ok(String::from_utf8_lossy(&out).trim().to_owned())
+    }
+}
+
+fn finish(args: &[&str], out: Output, ok_codes: &[i32]) -> Result<Vec<u8>, GitError> {
+    match out.status.code() {
+        Some(code) if ok_codes.contains(&code) => Ok(out.stdout),
+        code => Err(GitError::Failed {
+            args: args.join(" "),
+            code,
+            stderr: String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+        }),
     }
 }
