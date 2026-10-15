@@ -1,3 +1,7 @@
+mod watcher;
+
+pub use watcher::{spawn_watcher, EmitFn, WatchHandle};
+
 use std::path::{Component, Path, PathBuf};
 
 use notify::RecursiveMode;
