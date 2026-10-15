@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Diff, Hunk, parseDiff } from 'react-diff-view';
 import { getPatch, type ChangedFile, type PatchBody } from '../api';
@@ -15,7 +15,8 @@ interface Props {
   viewType: ViewType;
 }
 
-export function FileDiff({ worktreeId, file, viewType }: Props) {
+// 레포 목록이 갱신될 때마다(파일 event마다) 화면 전체가 다시 그려지므로, 바뀐 파일만 다시 그린다
+export const FileDiff = memo(function FileDiff({ worktreeId, file, viewType }: Props) {
   const [ref, inView] = useInView<HTMLElement>();
   const patch = useQuery({
     queryKey: ['patch', worktreeId, file.path, 'branch'],
@@ -38,7 +39,7 @@ export function FileDiff({ worktreeId, file, viewType }: Props) {
       )}
     </section>
   );
-}
+});
 
 function PatchView({ body, viewType, path }: { body: PatchBody; viewType: ViewType; path: string }) {
   if (body.kind === 'text') return <TextDiff diff={body.diff} viewType={viewType} path={path} />;

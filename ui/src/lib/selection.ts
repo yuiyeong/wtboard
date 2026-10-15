@@ -5,20 +5,23 @@ export interface Selection {
   worktreeId: string;
 }
 
-export interface Current {
+interface Current {
   repo: RepoSummary;
   worktree: WorktreeSummary;
 }
 
-/** 저장된 선택을 지금 목록에 맞춘다. worktree가 사라졌으면 같은 레포의 첫 worktree, 레포도 없으면 첫 레포의 첫 worktree */
+/**
+ * 저장된 선택을 지금 목록에 맞춘다. worktree가 사라졌으면 같은 레포에서, 레포도 없으면 첫 레포에서 고른다.
+ * 직접 고른 worktree는 열기 오류가 있어도 그대로 두고, 대신 고를 때는 오류 없는 worktree를 먼저 고른다.
+ */
 export function resolveSelection(repos: RepoSummary[], selection: Selection | null): Current | null {
   const usable = repos.filter((r) => r.worktrees.length > 0);
   const repo = usable.find((r) => r.id === selection?.repoId);
-  if (repo) {
-    return { repo, worktree: repo.worktrees.find((w) => w.id === selection?.worktreeId) ?? repo.worktrees[0] };
-  }
-  const first = usable[0];
-  return first ? { repo: first, worktree: first.worktrees[0] } : null;
+  const chosen = repo?.worktrees.find((w) => w.id === selection?.worktreeId);
+  if (repo && chosen) return { repo, worktree: chosen };
+  const fallback = repo ?? usable.find((r) => r.worktrees.some((w) => !w.error)) ?? usable[0];
+  if (!fallback) return null;
+  return { repo: fallback, worktree: fallback.worktrees.find((w) => !w.error) ?? fallback.worktrees[0] };
 }
 
 /** sidebar 표시 이름. detached HEAD면 폴더 이름 */

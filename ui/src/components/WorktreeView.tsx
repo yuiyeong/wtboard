@@ -8,7 +8,8 @@ import { FileDiff } from './FileDiff';
 import { FileTree } from './FileTree';
 
 export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: WorktreeSummary }) {
-  const { viewType, setViewType } = useUiStore();
+  const viewType = useUiStore((s) => s.viewType);
+  const setViewType = useUiStore((s) => s.setViewType);
   const files = useQuery({
     queryKey: ['files', worktree.id, 'branch'],
     queryFn: () => listFiles(worktree.id, 'branch'),

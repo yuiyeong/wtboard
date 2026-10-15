@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { createJSONStorage, persist } from 'zustand/middleware';
+import { persist } from 'zustand/middleware';
 import type { Selection } from './lib/selection';
 
 export type ViewType = 'split' | 'unified';
@@ -19,6 +19,6 @@ export const useUiStore = create<UiState>()(
       selection: null,
       select: (selection) => set({ selection }),
     }),
-    { name: 'wtboard-ui', storage: createJSONStorage(() => localStorage) },
+    { name: 'wtboard-ui' }, // 기본 저장소는 localStorage
   ),
 );

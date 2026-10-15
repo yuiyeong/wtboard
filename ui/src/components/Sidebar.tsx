@@ -16,40 +16,39 @@ export function Sidebar({ repos, errors, selectedId, onSelect }: Props) {
   const now = useNow(30_000);
   return (
     <nav className="w-56 shrink-0 overflow-y-auto border-r border-gray-200 bg-gray-50 py-2 text-sm">
-      {repos.map((repo) => (
-        <section key={repo.id} className="mb-2">
-          <h2 className="flex items-center gap-2 px-3 py-1 font-semibold text-gray-700" title={repo.id}>
-            <span className="flex-1 truncate">{repo.name}</span>
-            {PROFILE_BADGE[repo.profile] && (
-              <span className="rounded bg-gray-200 px-1 text-[10px] font-medium text-gray-600">
-                {PROFILE_BADGE[repo.profile]}
-              </span>
-            )}
-          </h2>
-          <ul>
-            {repo.worktrees.map((w) => (
-              <li key={w.id}>
-                <button
-                  onClick={() => onSelect({ repoId: repo.id, worktreeId: w.id })}
-                  title={w.path}
-                  className={`flex w-full flex-col py-1 pr-3 pl-5 text-left ${
-                    w.id === selectedId ? 'bg-blue-100' : 'hover:bg-gray-100'
-                  }`}
-                >
-                  <span className="flex w-full items-center gap-2">
-                    {w.error && <span className="text-amber-600">⚠</span>}
-                    <span className="flex-1 truncate font-mono text-xs">{worktreeLabel(w)}</span>
-                    {!w.error && <span className="text-xs text-gray-500 tabular-nums">{w.changedFiles}</span>}
-                  </span>
-                  {w.lastChangedAt !== null && (
-                    <span className="text-[11px] text-gray-400">{formatRelative(w.lastChangedAt, now)}</span>
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ))}
+      {repos.map((repo) => {
+        const badge = PROFILE_BADGE[repo.profile];
+        return (
+          <section key={repo.id} className="mb-2">
+            <h2 className="flex items-center gap-2 px-3 py-1 font-semibold text-gray-700" title={repo.id}>
+              <span className="flex-1 truncate">{repo.name}</span>
+              {badge && <span className="rounded bg-gray-200 px-1 text-[10px] font-medium text-gray-600">{badge}</span>}
+            </h2>
+            <ul>
+              {repo.worktrees.map((w) => (
+                <li key={w.id}>
+                  <button
+                    onClick={() => onSelect({ repoId: repo.id, worktreeId: w.id })}
+                    title={w.path}
+                    className={`flex w-full flex-col py-1 pr-3 pl-5 text-left ${
+                      w.id === selectedId ? 'bg-blue-100' : 'hover:bg-gray-100'
+                    }`}
+                  >
+                    <span className="flex w-full items-center gap-2">
+                      {w.error && <span className="text-amber-600">⚠</span>}
+                      <span className="flex-1 truncate font-mono text-xs">{worktreeLabel(w)}</span>
+                      {!w.error && <span className="text-xs text-gray-500 tabular-nums">{w.changedFiles}</span>}
+                    </span>
+                    {w.lastChangedAt !== null && (
+                      <span className="text-[11px] text-gray-400">{formatRelative(w.lastChangedAt, now)}</span>
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
       {errors.length > 0 && (
         <ul className="mt-2 border-t border-gray-200 px-3 pt-2 text-xs text-amber-700">
           {errors.map((e) => (
