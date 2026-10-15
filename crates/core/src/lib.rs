@@ -4,3 +4,4 @@ pub mod store;
 pub mod domain;
 pub mod profile;
 pub mod watch;
+pub mod worktree;

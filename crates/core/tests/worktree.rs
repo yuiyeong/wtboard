@@ -1,0 +1,128 @@
+mod common;
+
+use std::path::Path;
+
+use common::TestRepo;
+use wtboard_core::watch::Target;
+use wtboard_core::worktree::{ChangeScope, Worktree};
+
+/// main에 src/a.py, src/b.py를 커밋하고 feat 브랜치로 옮긴 레포
+fn feat_repo() -> TestRepo {
+    let repo = TestRepo::new();
+    repo.write("src/a.py", "a = 1\n");
+    repo.write("src/b.py", "b = 1\n");
+    repo.commit_all("base");
+    repo.git(&["checkout", "-q", "-b", "feat"]);
+    repo
+}
+
+fn open(repo: &TestRepo) -> std::sync::Arc<Worktree> {
+    Worktree::open(repo.path(), Some("main".into())).unwrap()
+}
+
+fn file(p: &str) -> Target {
+    Target::File(p.into())
+}
+
+fn paths(wt: &Worktree) -> Vec<String> {
+    wt.files().into_iter().map(|f| f.path).collect()
+}
+
+#[test]
+fn opens_with_current_changes() {
+    let repo = feat_repo();
+    repo.write("src/a.py", "a = 2\n");
+    let s = open(&repo).summary();
+    assert_eq!((s.branch.as_deref(), s.base.as_str(), s.changed_files), (Some("feat"), "main", 1));
+}
+
+#[test]
+fn open_reports_missing_path() {
+    let err = Worktree::open(Path::new("/nonexistent/repo"), None).err().unwrap();
+    assert!(err.to_string().contains("/nonexistent/repo"), "{err}");
+}
+
+#[test]
+fn file_edit_emits_file_scope() {
+    let repo = feat_repo();
+    let wt = open(&repo);
+    repo.write("src/a.py", "a = 2\n");
+    let ev = wt.handle(&[file("src/a.py")]).unwrap().expect("should emit");
+    assert_eq!((ev.scope, ev.changed_paths), (ChangeScope::File, vec!["src/a.py".to_string()]));
+    assert_eq!(paths(&wt), ["src/a.py"]);
+}
+
+#[test]
+fn re_editing_a_viewed_modified_file_is_caught_by_hash() {
+    let repo = feat_repo();
+    repo.write("src/a.py", "a = 2\n");
+    let wt = open(&repo);
+    wt.patch("src/a.py").unwrap(); // 화면에 보였음 → hash 저장
+    repo.write("src/a.py", "a = 3\n"); // +1/-1, status M 그대로
+    let ev = wt.handle(&[file("src/a.py")]).unwrap().expect("hash change should emit");
+    assert_eq!(ev.changed_paths, vec!["src/a.py".to_string()]);
+}
+
+#[test]
+fn events_without_real_change_are_silent() {
+    let repo = feat_repo();
+    repo.write("src/a.py", "a = 2\n");
+    let wt = open(&repo);
+    wt.patch("src/a.py").unwrap();
+    assert!(wt.handle(&[file("src/a.py")]).unwrap().is_none()); // touch만
+    assert!(wt.handle(&[file("src/b.py")]).unwrap().is_none()); // 깨끗한 파일
+    repo.git(&["add", "-A"]);
+    assert!(wt.handle(&[Target::List]).unwrap().is_none()); // stage는 브랜치 뷰를 안 바꾼다
+    repo.git(&["commit", "-q", "-m", "wip"]);
+    assert!(wt.handle(&[Target::Base]).unwrap().is_none()); // 커밋도 마찬가지
+}
+
+#[test]
+fn reverting_a_file_removes_it_from_the_list() {
+    let repo = feat_repo();
+    repo.write("src/a.py", "a = 2\n");
+    let wt = open(&repo);
+    repo.write("src/a.py", "a = 1\n");
+    let ev = wt.handle(&[file("src/a.py")]).unwrap().unwrap();
+    assert_eq!(ev.changed_paths, vec!["src/a.py".to_string()]);
+    assert!(wt.files().is_empty());
+}
+
+#[test]
+fn deleting_a_directory_falls_back_to_full_list() {
+    let repo = feat_repo();
+    let wt = open(&repo);
+    repo.remove("src"); // rm -rf src: event가 폴더 경로 하나로 올 수 있다
+    let ev = wt.handle(&[file("src")]).unwrap().unwrap();
+    assert_eq!(ev.scope, ChangeScope::List);
+    assert_eq!(paths(&wt), ["src/a.py", "src/b.py"]);
+}
+
+#[test]
+fn creating_a_directory_falls_back_to_full_list() {
+    let repo = feat_repo();
+    let wt = open(&repo);
+    repo.write("gen/models/user.g.dart", "// gen\n"); // codegen이 폴더째 생성
+    let ev = wt.handle(&[file("gen")]).unwrap().unwrap();
+    assert_eq!(ev.scope, ChangeScope::List);
+    assert_eq!(paths(&wt), ["gen/models/user.g.dart"]);
+}
+
+#[test]
+fn moving_fork_point_recomputes_from_merge_base() {
+    let upstream = TestRepo::new();
+    let clone = TestRepo::clone_of(&upstream);
+    clone.git(&["checkout", "-q", "-b", "feat"]);
+    clone.write("feat.txt", "f\n");
+    clone.commit_all("feat");
+    let wt = Worktree::open(clone.path(), None).unwrap();
+    assert_eq!(wt.summary().base, "origin/main");
+
+    upstream.write("up.txt", "u\n");
+    upstream.commit_all("upstream");
+    clone.git(&["fetch", "-q"]);
+    clone.git(&["merge", "-q", "--no-edit", "origin/main"]);
+    let ev = wt.handle(&[Target::Base]).unwrap().unwrap();
+    assert_eq!(ev.scope, ChangeScope::Base);
+    assert_eq!(paths(&wt), ["feat.txt"]); // up.txt는 base에도 있으므로 변경 아님
+}
