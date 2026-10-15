@@ -10,6 +10,8 @@ const GLOBAL_ARGS: &[&str] = &[
     "-c", "core.quotePath=false",
     "-c", "diff.noprefix=false",
     "-c", "diff.mnemonicPrefix=false",
+    // GIT_OPTIONAL_LOCKS=0이어도 porcelain `git diff`는 끝에 index를 refresh해서 다시 쓴다
+    "-c", "diff.autoRefreshIndex=false",
 ];
 
 /// 모든 `git diff` 호출에 붙인다. 색, 외부 diff 도구, textconv, prefix 설정을 무력화한다.

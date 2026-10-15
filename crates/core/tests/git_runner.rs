@@ -23,6 +23,7 @@ fn every_command_avoids_locks_and_fixes_output_format() {
             "-c", "core.quotePath=false",
             "-c", "diff.noprefix=false",
             "-c", "diff.mnemonicPrefix=false",
+            "-c", "diff.autoRefreshIndex=false",
             "status",
         ]
     );

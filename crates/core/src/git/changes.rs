@@ -15,11 +15,13 @@ pub fn list_changes(git: &Git, merge_base: &str, paths: &[&str]) -> Result<Vec<C
     let others = git.run(&others_args)?;
 
     let counts = parse_numstat(&numstat);
+    // index를 refresh하지 않으므로 name-status는 stat만 바뀐 파일도 M으로 낸다.
+    // numstat은 내용을 비교해 그런 파일을 빼므로, numstat에 없는 항목은 버린다.
     let mut files: Vec<ChangedFile> = parse_name_status(&status)
         .into_iter()
-        .map(|(status, path)| {
-            let (additions, deletions) = counts.get(&path).copied().unwrap_or((None, None));
-            ChangedFile { path, status, additions, deletions }
+        .filter_map(|(status, path)| {
+            let (additions, deletions) = counts.get(&path).copied()?;
+            Some(ChangedFile { path, status, additions, deletions })
         })
         .collect();
     for path in split_z(&others) {
