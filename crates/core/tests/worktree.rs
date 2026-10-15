@@ -3,6 +3,7 @@ mod common;
 use std::path::Path;
 
 use common::TestRepo;
+use wtboard_core::git::base::BaseSource;
 use wtboard_core::watch::Target;
 use wtboard_core::worktree::{ChangeScope, Worktree};
 
@@ -34,6 +35,7 @@ fn opens_with_current_changes() {
     repo.write("src/a.py", "a = 2\n");
     let s = open(&repo).summary();
     assert_eq!((s.branch.as_deref(), s.base.as_str(), s.changed_files), (Some("feat"), "main", 1));
+    assert_eq!(s.base_source, BaseSource::Config);
 }
 
 #[test]

@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 
 use crate::domain::{ChangedFile, FilePatch};
-use crate::git::base::{merge_base, resolve_base, BaseError};
+use crate::git::base::{merge_base, resolve_base, Base, BaseError, BaseSource};
 use crate::git::changes::list_changes;
 use crate::git::patch::file_patch;
 use crate::git::{Git, GitError};
@@ -48,6 +48,7 @@ pub struct WorktreeSummary {
     pub path: String,
     pub branch: Option<String>,
     pub base: String,
+    pub base_source: BaseSource,
     pub changed_files: usize,
 }
 
@@ -55,7 +56,7 @@ pub struct WorktreeSummary {
 const MAX_PATHS_PER_BATCH: usize = 200;
 
 struct State {
-    base: String,
+    base: Base,
     merge_base: String,
     files: BTreeMap<String, ChangedFile>,
     /// 화면이 patch를 가져간 파일의 마지막 hash
@@ -77,8 +78,8 @@ impl Worktree {
         }
         let layout = WatchLayout::detect(&Git::new(path))?.excluding(COMMON_EXCLUDED_DIRS);
         let git = Git::new(&layout.root);
-        let base = resolve_base(&git, configured_base.as_deref())?;
-        let mb = merge_base(&git, &base)?;
+        let base = resolve_base(&git, configured_base.as_deref(), None)?;
+        let mb = merge_base(&git, &base.name)?;
         let files = to_map(list_changes(&git, &mb, &[])?);
         Ok(Arc::new(Self {
             id: layout.root.to_string_lossy().into_owned(),
@@ -112,7 +113,8 @@ impl Worktree {
             id: self.id.clone(),
             path: self.id.clone(),
             branch,
-            base: st.base.clone(),
+            base: st.base.name.clone(),
+            base_source: st.base.source,
             changed_files: st.files.len(),
         }
     }
@@ -158,8 +160,8 @@ impl Worktree {
     }
 
     fn refresh_base(&self) -> Result<Option<WorktreeChanged>, WorktreeError> {
-        let base = resolve_base(&self.git, self.configured_base.as_deref())?;
-        let mb = merge_base(&self.git, &base)?;
+        let base = resolve_base(&self.git, self.configured_base.as_deref(), None)?;
+        let mb = merge_base(&self.git, &base.name)?;
         let unchanged = {
             let st = self.state.lock().unwrap();
             st.base == base && st.merge_base == mb
