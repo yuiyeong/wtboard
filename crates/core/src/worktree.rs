@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -157,7 +157,10 @@ impl Worktree {
             .git
             .run_str(&["config", "--get", "core.fsmonitor"])
             .is_ok_and(|v| !matches!(v.as_str(), "" | "false" | "no" | "off" | "0"));
-        let slow_ms = std::env::var("WTBOARD_SLOW_LIST_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(SLOW_LIST_MS);
+        static SLOW_MS: OnceLock<u64> = OnceLock::new();
+        let slow_ms = *SLOW_MS.get_or_init(|| {
+            std::env::var("WTBOARD_SLOW_LIST_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(SLOW_LIST_MS)
+        });
         let (list_ms, last_changed_at) = {
             let meta = self.meta.lock().unwrap();
             (meta.list_ms, meta.last_changed_at)
@@ -212,13 +215,12 @@ impl Worktree {
             paths.retain(|p| st.hashes.contains_key(p));
         }
 
-        // .gitattributes가 바뀌면 다른 파일의 접기 판정도 달라진다
-        let attrs_changed = paths.iter().any(|p| p == ".gitattributes" || p.ends_with("/.gitattributes"));
+        let rules_changed = paths.iter().any(|p| affects_other_files(p));
 
         let mut events = Vec::new();
         if targets.contains(&Target::Base) {
             events.push(self.refresh_base()?);
-        } else if too_many || attrs_changed || targets.contains(&Target::List) {
+        } else if too_many || rules_changed || targets.contains(&Target::List) {
             events.push(self.refresh_list()?);
         }
         // 목록 재계산은 status/+- 만 비교하므로, 같은 묶음의 파일 event는 hash 비교를 따로 한다
@@ -242,16 +244,14 @@ impl Worktree {
         if unchanged {
             return self.refresh_list();
         }
-        let (files, list_ms) = compute_list(&self.git, self.profile, &mb, &[])?;
+        let files = self.list_all(&mb)?;
         *self.state.lock().unwrap() = State { base, merge_base: mb, files, hashes: HashMap::new() };
-        self.meta.lock().unwrap().list_ms = list_ms;
         Ok(Some(self.event(ChangeScope::Base, Vec::new())))
     }
 
     fn refresh_list(&self) -> Result<Option<WorktreeChanged>, WorktreeError> {
         let mut st = self.state.lock().unwrap();
-        let (fresh, list_ms) = compute_list(&self.git, self.profile, &st.merge_base, &[])?;
-        self.meta.lock().unwrap().list_ms = list_ms;
+        let fresh = self.list_all(&st.merge_base)?;
         let changed: Vec<String> = st
             .files
             .keys()
@@ -321,6 +321,13 @@ impl Worktree {
         Ok((!changed.is_empty()).then(|| self.event(ChangeScope::File, changed)))
     }
 
+    /// 전체 목록을 다시 계산하고 걸린 시간을 기록한다 (fsmonitor 안내용)
+    fn list_all(&self, merge_base: &str) -> Result<BTreeMap<String, ChangedFile>, WorktreeError> {
+        let (files, list_ms) = compute_list(&self.git, self.profile, merge_base, &[])?;
+        self.meta.lock().unwrap().list_ms = list_ms;
+        Ok(files)
+    }
+
     fn event(&self, scope: ChangeScope, changed_paths: Vec<String>) -> WorktreeChanged {
         WorktreeChanged { worktree_id: self.id.clone(), changed_paths, scope }
     }
@@ -342,6 +349,12 @@ fn compute_list(
         f.collapsed = profile.collapses(&f.path) || generated.contains(&f.path);
     }
     Ok((to_map(files), started.elapsed().as_millis() as u64))
+}
+
+/// 바뀌면 다른 파일의 판정이 달라지는 파일: 접기(`.gitattributes`), untracked 목록(`.gitignore`)
+fn affects_other_files(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    matches!(name, ".gitattributes" | ".gitignore")
 }
 
 fn now_ms() -> u64 {

@@ -211,3 +211,14 @@ fn summary_reports_last_change_time_and_fsmonitor() {
     repo.git(&["config", "core.fsmonitor", "true"]);
     assert!(wt.summary().fsmonitor);
 }
+
+#[test]
+fn editing_gitignore_drops_newly_ignored_files() {
+    let repo = feat_repo();
+    repo.write("dist/out.js", "x\n");
+    let wt = open(&repo);
+    assert_eq!(paths(&wt), ["dist/out.js"]);
+    repo.write(".gitignore", "dist/\n");
+    wt.handle(&[file(".gitignore")]).unwrap().expect("should emit");
+    assert_eq!(paths(&wt), [".gitignore"]);
+}
