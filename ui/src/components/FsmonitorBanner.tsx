@@ -1,0 +1,29 @@
+import type { WorktreeSummary } from '../api';
+import { FSMONITOR_COMMANDS, showFsmonitorBanner } from '../lib/banner';
+import { useUiStore } from '../store';
+
+export function FsmonitorBanner({ repoId, worktree }: { repoId: string; worktree: WorktreeSummary }) {
+  const dismissed = useUiStore((s) => s.dismissedBanners);
+  const dismiss = useUiStore((s) => s.dismissBanner);
+  if (!showFsmonitorBanner(worktree, repoId, dismissed)) return null;
+  return (
+    <div className="flex items-start gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm">
+      <div className="flex-1">
+        <p className="mb-1">
+          이 레포는 변경 목록 계산에 {worktree.slowListMs}ms 걸립니다. 레포 폴더에서 다음을 실행하면 빨라집니다.
+        </p>
+        {FSMONITOR_COMMANDS.map((cmd) => (
+          <div key={cmd} className="flex items-center gap-2">
+            <code className="font-mono text-xs">{cmd}</code>
+            <button className="text-xs text-blue-600 hover:underline" onClick={() => navigator.clipboard.writeText(cmd)}>
+              복사
+            </button>
+          </div>
+        ))}
+      </div>
+      <button className="text-xs text-gray-500 hover:underline" onClick={() => dismiss(repoId)}>
+        닫기
+      </button>
+    </div>
+  );
+}

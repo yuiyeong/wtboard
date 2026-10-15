@@ -6,6 +6,7 @@ import { buildTree, flattenFiles, splitCollapsed, type TreeNode } from '../lib/t
 import { useUiStore } from '../store';
 import { FileDiff } from './FileDiff';
 import { FileTree } from './FileTree';
+import { FsmonitorBanner } from './FsmonitorBanner';
 
 /** 생성·lock 파일을 모아 두는 가짜 디렉터리. 실제 경로와 겹치지 않게 NUL로 시작한다 */
 const COLLAPSED_DIR = '\0collapsed';
@@ -39,7 +40,10 @@ export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: 
       <header className="flex items-center gap-3 border-b border-gray-200 px-4 py-2 text-sm">
         <strong>{repo.name}</strong>
         <span className="font-mono">{worktreeLabel(worktree)}</span>
-        <span className="text-gray-500">← {worktree.base}</span>
+        <span className="text-gray-500">
+          ← {worktree.base}
+          {worktree.baseSource === 'pr' && ' (PR)'}
+        </span>
         <span className="flex-1" />
         <div className="flex overflow-hidden rounded border border-gray-300">
           {(['split', 'unified'] as const).map((v) => (
@@ -53,6 +57,7 @@ export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: 
           ))}
         </div>
       </header>
+      <FsmonitorBanner repoId={repo.id} worktree={worktree} />
       <div className="flex min-h-0 flex-1">
         <aside className="w-80 shrink-0 overflow-y-auto border-r border-gray-200">
           <p className="px-3 py-2 text-xs text-gray-500">변경 파일 {files.data?.length ?? 0}개</p>
