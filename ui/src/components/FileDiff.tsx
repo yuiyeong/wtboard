@@ -18,7 +18,7 @@ interface Props {
 // 레포 목록이 갱신될 때마다(파일 event마다) 화면 전체가 다시 그려지므로, 바뀐 파일만 다시 그린다
 export const FileDiff = memo(function FileDiff({ worktreeId, file, viewType }: Props) {
   const [ref, inView] = useInView<HTMLElement>();
-  // 접힌 파일은 펼치기 전까지 patch를 계산하지 않는다
+  // 생성 파일은 접힌 채로 시작한다. 접혀 있으면 patch를 계산하지 않는다
   const [open, setOpen] = useState(!file.collapsed);
   const patch = useQuery({
     queryKey: ['patch', worktreeId, file.path, 'branch'],
@@ -29,23 +29,22 @@ export const FileDiff = memo(function FileDiff({ worktreeId, file, viewType }: P
   return (
     <section ref={ref} id={fileAnchorId(file.path)} className="mb-4 rounded border border-gray-200">
       <header
-        className={`sticky top-0 z-10 flex items-center gap-3 border-b border-gray-200 bg-gray-50 px-3 py-2 text-sm ${
-          file.collapsed ? 'cursor-pointer' : ''
-        }`}
-        onClick={file.collapsed ? () => setOpen(!open) : undefined}
+        className="sticky top-0 z-10 flex cursor-pointer items-center gap-3 border-b border-gray-200 bg-gray-50 px-3 py-2 text-sm"
+        onClick={() => setOpen(!open)}
       >
-        {file.collapsed && <span className="w-3 text-xs text-gray-500">{open ? '▾' : '▸'}</span>}
+        <span className="w-3 text-xs text-gray-500">{open ? '▾' : '▸'}</span>
         <span className="flex-1 truncate font-mono">{file.path}</span>
         {file.collapsed && !open && <span className="text-xs text-gray-400">생성 파일</span>}
         <LineCounts file={file} />
       </header>
-      {!open ? null : patch.error ? (
-        <p className="p-3 text-sm text-red-600">{String(patch.error)}</p>
-      ) : patch.data ? (
-        <PatchView body={patch.data.body} viewType={viewType} path={file.path} />
-      ) : (
-        <div className="h-20" />
-      )}
+      {open &&
+        (patch.error ? (
+          <p className="p-3 text-sm text-red-600">{String(patch.error)}</p>
+        ) : patch.data ? (
+          <PatchView body={patch.data.body} viewType={viewType} path={file.path} />
+        ) : (
+          <div className="h-20" />
+        ))}
     </section>
   );
 });
