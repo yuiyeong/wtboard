@@ -1,6 +1,6 @@
 use std::fs;
 
-use wtboard_core::profile::{is_excluded, Profile};
+use wtboard_core::profile::{Excludes, Profile};
 
 fn root_with(files: &[&str]) -> tempfile::TempDir {
     let d = tempfile::tempdir().unwrap();
@@ -21,8 +21,8 @@ fn detects_profile_from_marker_files() {
 
 #[test]
 fn excluded_patterns_match_segment_runs_at_any_depth() {
-    let pats: Vec<String> = Profile::Flutter.excluded_dirs().into_iter().map(String::from).collect();
-    let ex = |p: &str| is_excluded(&p.split('/').collect::<Vec<_>>(), &pats);
+    let excludes = Excludes::new(&Profile::Flutter.excluded_dirs());
+    let ex = |p: &str| excludes.matches(&p.split('/').collect::<Vec<_>>());
     assert!(ex("ios/Pods/Alamofire/x.swift"));
     assert!(ex("packages/app/ios/Pods/x"));
     assert!(ex("build/app.apk"));

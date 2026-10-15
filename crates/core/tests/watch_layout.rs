@@ -8,7 +8,7 @@ use wtboard_core::git::Git;
 use wtboard_core::watch::{Target, WatchLayout};
 
 fn layout(path: &Path) -> WatchLayout {
-    WatchLayout::detect(&Git::new(path), &["node_modules"]).unwrap()
+    WatchLayout::detect(&Git::new(path)).unwrap().excluding(&["node_modules"])
 }
 
 fn file(p: &str) -> Target {
@@ -71,7 +71,7 @@ fn paths_are_canonical_and_nfc() {
 #[test]
 fn multi_segment_excluded_pattern_is_ignored() {
     let repo = TestRepo::new();
-    let l = WatchLayout::detect(&Git::new(repo.path()), &["ios/Pods"]).unwrap();
+    let l = WatchLayout::detect(&Git::new(repo.path())).unwrap().excluding(&["ios/Pods"]);
     assert_eq!(l.classify(&l.root.join("ios/Pods/A/x.h")), Target::Ignore);
     assert_eq!(l.classify(&l.root.join("ios/Runner/x.h")), file("ios/Runner/x.h"));
 }

@@ -44,9 +44,10 @@ impl Profile {
     /// 감시에서 뺄 폴더 pattern. `/`가 있으면 연속된 segment로 맞춘다 (`ios/Pods`)
     pub fn excluded_dirs(self) -> Vec<&'static str> {
         let own: &[&str] = match self {
-            Self::Flutter => &[".dart_tool", "build", "ios/Pods", ".fvm"],
-            Self::Node => &["node_modules", ".next", "out", ".turbo"],
-            Self::Python => &["venv", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache"],
+            // 공통 목록에 없는 것만 적는다
+            Self::Flutter => &["build", "ios/Pods"],
+            Self::Node => &["out"],
+            Self::Python => &["venv"],
             Self::Default => &[],
         };
         COMMON_EXCLUDED_DIRS.iter().chain(own).copied().collect()
@@ -85,10 +86,17 @@ fn glob_name(pattern: &str, name: &str) -> bool {
     }
 }
 
-/// 경로 segment 안에 제외 pattern의 segment가 연속으로 나오는지. 깊이는 상관없다
-pub fn is_excluded(parts: &[&str], patterns: &[String]) -> bool {
-    patterns.iter().any(|p| {
-        let pat: Vec<&str> = p.split('/').collect();
-        parts.windows(pat.len()).any(|w| w == pat.as_slice())
-    })
+/// 감시 제외 pattern. 경로 segment 안에 pattern의 segment가 연속으로 나오면 제외한다. 깊이는 상관없다.
+/// pattern은 만들 때 한 번만 나눈다 (`classify`는 FS event마다 불린다)
+#[derive(Debug, Clone, Default)]
+pub struct Excludes(Vec<Vec<String>>);
+
+impl Excludes {
+    pub fn new(patterns: &[&str]) -> Self {
+        Self(patterns.iter().map(|p| p.split('/').map(String::from).collect()).collect())
+    }
+
+    pub fn matches(&self, parts: &[&str]) -> bool {
+        self.0.iter().any(|pat| parts.windows(pat.len()).any(|w| w.iter().eq(pat)))
+    }
 }

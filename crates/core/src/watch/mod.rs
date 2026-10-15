@@ -8,7 +8,7 @@ use notify::RecursiveMode;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::git::{Git, GitError};
-use crate::profile::is_excluded;
+use crate::profile::Excludes;
 
 /// FS event 경로 하나가 요구하는 재계산 범위
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,11 +27,12 @@ pub struct WatchLayout {
     pub root: PathBuf,
     pub git_dir: PathBuf,
     pub common_dir: PathBuf,
-    excluded_dirs: Vec<String>,
+    excluded: Excludes,
 }
 
 impl WatchLayout {
-    pub fn detect(git: &Git, excluded_dirs: &[&str]) -> Result<Self, GitError> {
+    /// 제외 폴더 없이 만든다. profile은 root를 알아야 정할 수 있으므로 `excluding`으로 붙인다
+    pub fn detect(git: &Git) -> Result<Self, GitError> {
         let out = git.run_str(&[
             "rev-parse",
             "--path-format=absolute",
@@ -47,13 +48,12 @@ impl WatchLayout {
             root,
             git_dir,
             common_dir,
-            excluded_dirs: excluded_dirs.iter().map(|s| s.to_string()).collect(),
+            excluded: Excludes::default(),
         })
     }
 
-    /// 제외 폴더를 바꾼다. profile은 root를 알아야 정할 수 있어서 `detect` 뒤에 붙인다
     pub fn excluding(mut self, dirs: &[&str]) -> Self {
-        self.excluded_dirs = dirs.iter().map(|s| s.to_string()).collect();
+        self.excluded = Excludes::new(dirs);
         self
     }
 
@@ -75,7 +75,7 @@ impl WatchLayout {
                 _ => None,
             })
             .collect();
-        if parts.is_empty() || parts.contains(&".git") || is_excluded(&parts, &self.excluded_dirs) {
+        if parts.is_empty() || parts.contains(&".git") || self.excluded.matches(&parts) {
             return Target::Ignore;
         }
         Target::File(parts.join("/"))

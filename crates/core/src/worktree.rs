@@ -75,7 +75,7 @@ impl Worktree {
         if !path.is_dir() {
             return Err(WorktreeError::Missing(path.to_path_buf()));
         }
-        let layout = WatchLayout::detect(&Git::new(path), COMMON_EXCLUDED_DIRS)?;
+        let layout = WatchLayout::detect(&Git::new(path))?.excluding(COMMON_EXCLUDED_DIRS);
         let git = Git::new(&layout.root);
         let base = resolve_base(&git, configured_base.as_deref())?;
         let mb = merge_base(&git, &base)?;
