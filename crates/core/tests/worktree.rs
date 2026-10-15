@@ -4,6 +4,7 @@ use std::path::Path;
 
 use common::TestRepo;
 use wtboard_core::git::base::BaseSource;
+use wtboard_core::profile::Profile;
 use wtboard_core::watch::Target;
 use wtboard_core::worktree::{ChangeScope, Worktree};
 
@@ -141,4 +142,72 @@ fn huge_event_batches_fall_back_to_full_list() {
     let ev = wt.handle(&targets).unwrap().expect("should emit");
     assert_eq!(ev.scope, ChangeScope::List);
     assert_eq!(paths(&wt), ["src/a.py"]);
+}
+
+#[test]
+fn generated_and_lock_files_are_marked_collapsed() {
+    let repo = TestRepo::new();
+    repo.write("pubspec.yaml", "name: app\n");
+    repo.write(".gitattributes", "lib/api/** linguist-generated\n");
+    repo.commit_all("flutter");
+    repo.git(&["checkout", "-q", "-b", "feat"]);
+    repo.write("lib/user.dart", "class User {}\n");
+    repo.write("lib/user.g.dart", "// gen\n");
+    repo.write("lib/api/client.dart", "// gen\n");
+    repo.write("pubspec.lock", "x\n");
+    let wt = open(&repo);
+    let got: Vec<(String, bool)> = wt.files().into_iter().map(|f| (f.path, f.collapsed)).collect();
+    let want = [("lib/api/client.dart", true), ("lib/user.dart", false), ("lib/user.g.dart", true), ("pubspec.lock", true)];
+    assert_eq!(got, want.map(|(p, c)| (p.to_string(), c)));
+    assert_eq!(wt.summary().profile, Profile::Flutter);
+}
+
+#[test]
+fn single_file_refresh_keeps_collapsed_flag() {
+    let repo = TestRepo::new();
+    repo.write("package.json", "{}\n");
+    repo.commit_all("node");
+    repo.git(&["checkout", "-q", "-b", "feat"]);
+    let wt = open(&repo);
+    repo.write("package-lock.json", "{}\n");
+    wt.handle(&[file("package-lock.json")]).unwrap().expect("should emit");
+    assert!(wt.files()[0].collapsed);
+}
+
+/// Review Focus 4: .gitattributes를 고치면 다른 파일의 접기 판정이 바로 바뀐다
+#[test]
+fn editing_gitattributes_recomputes_collapsed_flags() {
+    let repo = feat_repo();
+    repo.write("src/gen.py", "x = 1\n");
+    let wt = open(&repo);
+    assert!(!wt.files().iter().any(|f| f.collapsed));
+    repo.write(".gitattributes", "src/gen.py linguist-generated\n");
+    let ev = wt.handle(&[file(".gitattributes")]).unwrap().expect("should emit");
+    assert!(ev.changed_paths.contains(&"src/gen.py".to_string()), "{ev:?}");
+    assert!(wt.files().iter().find(|f| f.path == "src/gen.py").unwrap().collapsed);
+}
+
+#[test]
+fn flutter_build_dir_is_not_watched() {
+    let repo = TestRepo::new();
+    repo.write("pubspec.yaml", "name: app\n");
+    repo.commit_all("flutter");
+    let wt = open(&repo);
+    let l = wt.layout();
+    assert_eq!(l.classify(&l.root.join("build/app/x.txt")), Target::Ignore);
+    assert_eq!(l.classify(&l.root.join("lib/build.dart")), file("lib/build.dart"));
+}
+
+#[test]
+fn summary_reports_last_change_time_and_fsmonitor() {
+    let repo = feat_repo();
+    let wt = open(&repo);
+    let s = wt.summary();
+    assert_eq!((s.last_changed_at, s.slow_list_ms, s.fsmonitor, s.error), (None, None, false, None));
+    repo.write("src/a.py", "a = 2\n");
+    wt.handle(&[file("src/a.py")]).unwrap().expect("should emit");
+    assert!(wt.summary().last_changed_at.is_some());
+    // `git config --get`만 하므로 fsmonitor daemon은 뜨지 않는다
+    repo.git(&["config", "core.fsmonitor", "true"]);
+    assert!(wt.summary().fsmonitor);
 }

@@ -21,12 +21,18 @@ pub fn list_changes(git: &Git, merge_base: &str, paths: &[&str]) -> Result<Vec<C
         .into_iter()
         .filter_map(|(status, path)| {
             let (additions, deletions) = counts.get(&path).copied()?;
-            Some(ChangedFile { path, status, additions, deletions })
+            Some(ChangedFile { path, status, additions, deletions, collapsed: false })
         })
         .collect();
     for path in split_z(&others) {
         let additions = count_text_lines(&git.cwd().join(&path));
-        files.push(ChangedFile { path, status: FileStatus::Untracked, additions, deletions: additions.map(|_| 0) });
+        files.push(ChangedFile {
+            path,
+            status: FileStatus::Untracked,
+            additions,
+            deletions: additions.map(|_| 0),
+            collapsed: false,
+        });
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)

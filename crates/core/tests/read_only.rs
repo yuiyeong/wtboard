@@ -6,7 +6,9 @@ use common::TestRepo;
 use wtboard_core::domain::FileStatus;
 use wtboard_core::git::changes::list_changes;
 use wtboard_core::git::patch::file_patch;
+use wtboard_core::git::attrs::linguist_generated;
 use wtboard_core::git::Git;
+use wtboard_core::worktree::Worktree;
 
 /// 앱은 레포에 아무것도 쓰지 않는다 (spec 1절). env가 아니라 .git/index 바이트로 확인한다.
 #[test]
@@ -60,6 +62,7 @@ fn stat_dirty_but_unchanged_base_file_is_not_listed_and_index_is_untouched() {
             status: FileStatus::Modified,
             additions: Some(0),
             deletions: Some(0),
+            collapsed: false,
         },
     )
     .unwrap();
@@ -67,4 +70,29 @@ fn stat_dirty_but_unchanged_base_file_is_not_listed_and_index_is_untouched() {
     assert_eq!(std::fs::read(&index).unwrap(), before, ".git/index was rewritten");
     let paths: Vec<_> = files.iter().map(|f| f.path.as_str()).collect();
     assert_eq!(paths, ["other.txt"]);
+}
+
+#[test]
+fn linked_worktree_reads_and_check_attr_leave_both_indexes_untouched() {
+    let repo = TestRepo::new();
+    repo.write(".gitattributes", "gen/** linguist-generated\n");
+    repo.commit_all("attrs");
+    let wt_path = repo.path().parent().unwrap().join("wt");
+    repo.git(&["worktree", "add", "-q", "-b", "feat", wt_path.to_str().unwrap()]);
+    std::fs::create_dir_all(wt_path.join("gen")).unwrap();
+    std::fs::write(wt_path.join("gen/a.ts"), "x\n").unwrap();
+    std::fs::write(wt_path.join("README.md"), "changed\n").unwrap();
+
+    let main_index = repo.path().join(".git/index");
+    let wt_index = repo.path().join(".git/worktrees/wt/index");
+    let (main_before, wt_before) = (std::fs::read(&main_index).unwrap(), std::fs::read(&wt_index).unwrap());
+
+    let wt = Worktree::open(&wt_path, Some("main".into())).unwrap();
+    for f in wt.files() {
+        wt.patch(&f.path).unwrap();
+    }
+    linguist_generated(&Git::new(&wt_path), &["gen/a.ts", "README.md"]).unwrap();
+
+    assert_eq!(std::fs::read(&main_index).unwrap(), main_before, "main index was rewritten");
+    assert_eq!(std::fs::read(&wt_index).unwrap(), wt_before, "worktree index was rewritten");
 }

@@ -20,6 +20,8 @@ pub struct ChangedFile {
     /// `None`이면 바이너리이거나, `MAX_DIFF_BYTES`를 넘어 줄 수를 세지 않은 untracked 파일
     pub additions: Option<u32>,
     pub deletions: Option<u32>,
+    /// 생성·lock 파일이라 접어서 보여 준다 (profile pattern 또는 `linguist-generated`)
+    pub collapsed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
