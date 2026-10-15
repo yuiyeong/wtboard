@@ -67,3 +67,19 @@ fn paths_are_canonical_and_nfc() {
     assert_ne!(nfd, "한글.txt");
     assert_eq!(l.classify(&l.root.join(&nfd)), file("한글.txt"));
 }
+
+#[test]
+fn multi_segment_excluded_pattern_is_ignored() {
+    let repo = TestRepo::new();
+    let l = WatchLayout::detect(&Git::new(repo.path()), &["ios/Pods"]).unwrap();
+    assert_eq!(l.classify(&l.root.join("ios/Pods/A/x.h")), Target::Ignore);
+    assert_eq!(l.classify(&l.root.join("ios/Runner/x.h")), file("ios/Runner/x.h"));
+}
+
+#[test]
+fn excluding_replaces_the_excluded_dirs() {
+    let repo = TestRepo::new();
+    let l = layout(repo.path()).excluding(&["build"]);
+    assert_eq!(l.classify(&l.root.join("build/x.txt")), Target::Ignore);
+    assert_eq!(l.classify(&l.root.join("node_modules/x.js")), file("node_modules/x.js"));
+}

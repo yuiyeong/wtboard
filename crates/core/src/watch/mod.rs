@@ -8,6 +8,7 @@ use notify::RecursiveMode;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::git::{Git, GitError};
+use crate::profile::is_excluded;
 
 /// FS event 경로 하나가 요구하는 재계산 범위
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +51,12 @@ impl WatchLayout {
         })
     }
 
+    /// 제외 폴더를 바꾼다. profile은 root를 알아야 정할 수 있어서 `detect` 뒤에 붙인다
+    pub fn excluding(mut self, dirs: &[&str]) -> Self {
+        self.excluded_dirs = dirs.iter().map(|s| s.to_string()).collect();
+        self
+    }
+
     pub fn classify(&self, path: &Path) -> Target {
         let path = nfc(path);
         if let Ok(rel) = path.strip_prefix(&self.git_dir) {
@@ -68,8 +75,7 @@ impl WatchLayout {
                 _ => None,
             })
             .collect();
-        let excluded = |p: &&str| *p == ".git" || self.excluded_dirs.iter().any(|e| e == p);
-        if parts.is_empty() || parts.iter().any(excluded) {
+        if parts.is_empty() || parts.contains(&".git") || is_excluded(&parts, &self.excluded_dirs) {
             return Target::Ignore;
         }
         Target::File(parts.join("/"))
@@ -122,12 +128,12 @@ fn is_lock(rel: &Path) -> bool {
     rel.extension().is_some_and(|e| e == "lock")
 }
 
-fn canonical(p: &str) -> PathBuf {
-    let p = Path::new(p);
+pub(crate) fn canonical(p: impl AsRef<Path>) -> PathBuf {
+    let p = p.as_ref();
     nfc(&p.canonicalize().unwrap_or_else(|_| p.to_path_buf()))
 }
 
 /// macOS FSEvents는 NFD 경로를 줄 수 있고 git(core.precomposeUnicode)은 NFC를 쓴다
-fn nfc(path: &Path) -> PathBuf {
+pub(crate) fn nfc(path: &Path) -> PathBuf {
     PathBuf::from(path.to_string_lossy().nfc().collect::<String>())
 }
