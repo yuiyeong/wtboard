@@ -218,7 +218,13 @@ impl Worktree {
     /// gh로 PR base를 물어 base에 반영한다. network 호출이라 수 초 걸릴 수 있다. base가 바뀌면 Base event
     pub fn refresh_pr_base(&self) -> Result<Option<WorktreeChanged>, WorktreeError> {
         let pr = self.gh.pr_base(self.git.cwd()).and_then(|b| remote_branch(&self.git, &b));
-        self.meta.lock().unwrap().pr_base = pr;
+        {
+            let mut meta = self.meta.lock().unwrap();
+            if meta.pr_base == pr {
+                return Ok(None); // PR이 없거나 base가 그대로
+            }
+            meta.pr_base = pr;
+        }
         self.refresh_base()
     }
 

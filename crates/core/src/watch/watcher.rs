@@ -85,7 +85,7 @@ fn run_worker(wt: Arc<Worktree>, rx: mpsc::Receiver<Msg>, poll: Duration, emit: 
             Ok(None) => {}
             Err(e) => eprintln!("[wtboard] {}: 재계산 실패: {e}", wt.id()),
         }
-        // HEAD가 바뀌었으면(브랜치 전환) PR base를 다시 묻는다. 같은 브랜치면 claim이 막는다
+        // HEAD·refs 변경과 poll 때 브랜치가 바뀌었는지 보고, 바뀌었으면 PR base를 다시 묻는다
         if targets.contains(&Target::Base) {
             lookup_pr(&wt, &emit);
         }
