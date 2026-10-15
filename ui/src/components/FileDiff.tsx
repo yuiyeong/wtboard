@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Diff, Hunk, parseDiff } from 'react-diff-view';
 import { getPatch, type ChangedFile, type PatchBody } from '../api';
 import { fileAnchorId } from '../lib/anchor';
+import { tokenizeHunks } from '../lib/highlight';
+import { languageForPath } from '../lib/language';
 import { useInView } from '../lib/useInView';
 import type { ViewType } from '../store';
 import { LineCounts } from './FileList';
@@ -30,7 +32,7 @@ export function FileDiff({ worktreeId, file, viewType }: Props) {
       {patch.error ? (
         <p className="p-3 text-sm text-red-600">{String(patch.error)}</p>
       ) : patch.data ? (
-        <PatchView body={patch.data.body} viewType={viewType} />
+        <PatchView body={patch.data.body} viewType={viewType} path={file.path} />
       ) : (
         <div className="h-20" />
       )}
@@ -38,8 +40,8 @@ export function FileDiff({ worktreeId, file, viewType }: Props) {
   );
 }
 
-function PatchView({ body, viewType }: { body: PatchBody; viewType: ViewType }) {
-  if (body.kind === 'text') return <TextDiff diff={body.diff} viewType={viewType} />;
+function PatchView({ body, viewType, path }: { body: PatchBody; viewType: ViewType; path: string }) {
+  if (body.kind === 'text') return <TextDiff diff={body.diff} viewType={viewType} path={path} />;
   const label = body.kind === 'binary' ? '바이너리 파일' : '1MB 초과 파일';
   return (
     <p className="p-3 text-sm text-gray-500">
@@ -48,13 +50,14 @@ function PatchView({ body, viewType }: { body: PatchBody; viewType: ViewType }) 
   );
 }
 
-function TextDiff({ diff, viewType }: { diff: string; viewType: ViewType }) {
+function TextDiff({ diff, viewType, path }: { diff: string; viewType: ViewType; path: string }) {
   const file = useMemo(() => parseDiff(diff)[0], [diff]);
+  const tokens = useMemo(() => (file ? tokenizeHunks(file.hunks, languageForPath(path)) : undefined), [file, path]);
   if (!file || file.hunks.length === 0) {
     return <p className="p-3 text-sm text-gray-500">내용 변경 없음 (빈 파일 또는 권한 변경)</p>;
   }
   return (
-    <Diff viewType={viewType} diffType={file.type} hunks={file.hunks}>
+    <Diff viewType={viewType} diffType={file.type} hunks={file.hunks} tokens={tokens}>
       {(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
     </Diff>
   );
