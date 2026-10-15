@@ -28,7 +28,7 @@ impl TestRepo {
     pub fn clone_of(upstream: &TestRepo) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("clone");
-        run(dir.path(), &["clone", "-q", upstream.root.to_str().unwrap(), root.to_str().unwrap()]);
+        git_at(dir.path(), &["clone", "-q", upstream.root.to_str().unwrap(), root.to_str().unwrap()]);
         let repo = TestRepo { _dir: dir, root };
         repo.configure();
         repo
@@ -47,7 +47,7 @@ impl TestRepo {
     }
 
     pub fn git(&self, args: &[&str]) -> String {
-        run(&self.root, args)
+        git_at(&self.root, args)
     }
 
     pub fn write(&self, rel: &str, contents: impl AsRef<[u8]>) {
@@ -77,7 +77,7 @@ impl TestRepo {
     }
 }
 
-fn run(cwd: &Path, args: &[&str]) -> String {
+pub fn git_at(cwd: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .args(args)
         .current_dir(cwd)

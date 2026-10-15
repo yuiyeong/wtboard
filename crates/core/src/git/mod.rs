@@ -2,6 +2,7 @@ pub mod attrs;
 pub mod base;
 pub mod changes;
 pub mod patch;
+pub mod worktrees;
 
 use std::path::{Path, PathBuf};
 use std::io::Write;
