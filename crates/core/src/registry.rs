@@ -39,7 +39,7 @@ impl Registry {
             let fail = |message: String| EntryError { path: entry.path.clone(), message };
             let path = entry.resolved_path();
             if !path.is_dir() {
-                errors.push(fail(format!("경로 없음: {}", path.display())));
+                errors.push(fail("경로 없음".into())); // path는 EntryError.path로 이미 보인다
                 continue;
             }
             let dir = match common_dir(&Git::new(&path)) {
