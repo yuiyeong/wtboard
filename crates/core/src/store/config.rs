@@ -1,4 +1,6 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -30,6 +32,15 @@ pub struct WatchConfig {
     pub fallback_poll_secs: u64,
 }
 
+/// 0 같은 값이면 worker가 쉬지 않고 재계산한다
+pub const MIN_POLL_SECS: u64 = 5;
+
+impl WatchConfig {
+    pub fn poll_interval(&self) -> Duration {
+        Duration::from_secs(self.fallback_poll_secs.max(MIN_POLL_SECS))
+    }
+}
+
 impl Default for WatchConfig {
     fn default() -> Self {
         Self { fallback_poll_secs: 30 }
@@ -48,7 +59,7 @@ impl Config {
     }
 
     pub fn default_path() -> PathBuf {
-        home_dir().join(".wtboard/config.toml")
+        config_path(std::env::var_os("WTBOARD_CONFIG"), &home_dir())
     }
 }
 
@@ -56,6 +67,13 @@ impl RepoConfig {
     pub fn resolved_path(&self) -> PathBuf {
         expand_tilde(&self.path, &home_dir())
     }
+}
+
+/// `WTBOARD_CONFIG`가 있으면 그 경로, 없으면 `~/.wtboard/config.toml`
+pub fn config_path(env: Option<OsString>, home: &Path) -> PathBuf {
+    env.filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".wtboard/config.toml"))
 }
 
 pub fn expand_tilde(p: &str, home: &Path) -> PathBuf {
