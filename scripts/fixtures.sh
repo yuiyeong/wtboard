@@ -9,14 +9,16 @@ DIR=$(cd "$1" && pwd)
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 g() { git -c user.email=fixture@example.com -c user.name=fixture -c commit.gpgsign=false "$@"; }
 
+# $1 worktree, $2 경로, $3 내용
+put() { mkdir -p "$(dirname "$1/$2")"; printf '%b' "$3" > "$1/$2"; }
+
 # $1 이름. stdin의 "경로<TAB>내용" 줄로 upstream main을 만들고 clone + feat worktree를 연다
 repo() {
   name=$1
   rm -rf "$DIR/upstream-$name" "$DIR/$name" "$DIR/$name-feat"
   mkdir -p "$DIR/upstream-$name"
   while IFS="	" read -r path body; do
-    mkdir -p "$DIR/upstream-$name/$(dirname "$path")"
-    printf '%b' "$body" > "$DIR/upstream-$name/$path"
+    put "$DIR/upstream-$name" "$path" "$body"
   done
   g -C "$DIR/upstream-$name" init -q -b main
   g -C "$DIR/upstream-$name" add -A
@@ -25,8 +27,6 @@ repo() {
   g -C "$DIR/$name" worktree add -q -b feat "$DIR/$name-feat"
 }
 
-# $1 worktree, $2 경로, $3 내용
-put() { mkdir -p "$(dirname "$1/$2")"; printf '%b' "$3" > "$1/$2"; }
 
 repo py <<'EOF'
 requirements.txt	fastapi\n

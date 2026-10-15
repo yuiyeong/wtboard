@@ -9,7 +9,7 @@ use wtboard_core::repo::{RepoSummary, Sink};
 use wtboard_core::store::config::Config;
 use wtboard_core::worktree::{Worktree, WorktreeChanged};
 
-/// Registry는 background thread에서 열고 끝나면 채운다. 그 전에는 비어 있다
+/// Registry는 background thread에서 열고 끝나면 채운다. command는 채워질 때까지 기다린다
 struct AppState {
     registry: OnceLock<Result<Registry, String>>,
 }
@@ -17,17 +17,15 @@ struct AppState {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ReposResponse {
-    ready: bool,
     repos: Vec<RepoSummary>,
     errors: Vec<EntryError>,
 }
 
 #[tauri::command]
 async fn list_repos(app: AppHandle) -> Result<ReposResponse, String> {
-    blocking(move || match app.state::<AppState>().registry.get() {
-        None => Ok(ReposResponse { ready: false, repos: Vec::new(), errors: Vec::new() }),
-        Some(Err(e)) => Err(e.clone()),
-        Some(Ok(reg)) => Ok(ReposResponse { ready: true, repos: reg.repos(), errors: reg.errors().to_vec() }),
+    blocking(move || {
+        let reg = registry(&app)?;
+        Ok(ReposResponse { repos: reg.repos(), errors: reg.errors().to_vec() })
     })
     .await
 }
@@ -49,12 +47,13 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
     tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
+/// 아직 여는 중이면 열릴 때까지 기다린다. blocking pool 안에서만 부른다
+fn registry(app: &AppHandle) -> Result<&Registry, String> {
+    app.state::<AppState>().inner().registry.wait().as_ref().map_err(Clone::clone)
+}
+
 fn worktree(app: &AppHandle, id: &str) -> Result<Arc<Worktree>, String> {
-    match app.state::<AppState>().registry.get() {
-        Some(Ok(reg)) => reg.worktree(id).ok_or_else(|| format!("알 수 없는 worktree: {id}")),
-        Some(Err(e)) => Err(e.clone()),
-        None => Err("아직 불러오는 중입니다".into()),
-    }
+    registry(app)?.worktree(id).ok_or_else(|| format!("알 수 없는 worktree: {id}"))
 }
 
 fn ensure_branch_view(view: &str) -> Result<(), String> {
@@ -93,7 +92,6 @@ fn main() {
             std::thread::spawn(move || {
                 let result = open_registry(&handle);
                 let _ = handle.state::<AppState>().registry.set(result);
-                let _ = handle.emit("worktrees-updated", ());
             });
             Ok(())
         })

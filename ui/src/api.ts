@@ -55,8 +55,6 @@ export interface EntryError {
 }
 
 export interface ReposResponse {
-  /** false면 아직 레포를 여는 중 */
-  ready: boolean;
   repos: RepoSummary[];
   errors: EntryError[];
 }

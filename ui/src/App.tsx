@@ -9,14 +9,10 @@ import { useWorktreeEvents } from './useWorktreeEvents';
 
 export function App() {
   useWorktreeEvents();
-  const repos = useQuery({
-    queryKey: ['repos'],
-    queryFn: listRepos,
-    // 시작 직후 event를 놓쳐도 준비되면 화면이 뜨게 한다
-    refetchInterval: (q) => (q.state.data?.ready === false ? 500 : false),
-  });
+  // 앱이 레포를 여는 동안 list_repos는 기다렸다가 답한다
+  const repos = useQuery({ queryKey: ['repos'], queryFn: listRepos });
   if (repos.error) return <ErrorScreen message={String(repos.error)} />;
-  if (!repos.data?.ready) return <p className="p-4 text-gray-500">불러오는 중…</p>;
+  if (!repos.data) return <p className="p-4 text-gray-500">불러오는 중…</p>;
   const repo = repos.data.repos.find((r) => r.worktrees.some((w) => !w.error));
   const worktree = repo?.worktrees.find((w) => !w.error);
   if (!repo || !worktree) {
