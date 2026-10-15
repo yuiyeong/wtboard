@@ -1,4 +1,5 @@
 pub mod base;
+pub mod changes;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -11,7 +12,6 @@ const GLOBAL_ARGS: &[&str] = &[
 ];
 
 /// 모든 `git diff` 호출에 붙인다. 색, 외부 diff 도구, textconv, prefix 설정을 무력화한다.
-#[allow(dead_code)]
 pub(crate) const DIFF_FLAGS: &[&str] = &[
     "--no-color",
     "--no-ext-diff",
