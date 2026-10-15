@@ -1,0 +1,127 @@
+use std::path::{Component, Path, PathBuf};
+
+use notify::RecursiveMode;
+use unicode_normalization::UnicodeNormalization;
+
+use crate::git::{Git, GitError};
+
+/// FS event 경로 하나가 요구하는 재계산 범위
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    /// 작업 폴더 파일. 그 파일만 다시 계산
+    File(String),
+    /// HEAD / index 변경. 파일 목록 전체 다시 계산
+    List,
+    /// refs 변경 (fetch, 커밋). merge-base부터 다시 계산
+    Base,
+    Ignore,
+}
+
+#[derive(Debug, Clone)]
+pub struct WatchLayout {
+    pub root: PathBuf,
+    pub git_dir: PathBuf,
+    pub common_dir: PathBuf,
+    excluded_dirs: Vec<String>,
+}
+
+impl WatchLayout {
+    pub fn detect(git: &Git, excluded_dirs: &[&str]) -> Result<Self, GitError> {
+        let out = git.run_str(&[
+            "rev-parse",
+            "--path-format=absolute",
+            "--show-toplevel",
+            "--git-dir",
+            "--git-common-dir",
+        ])?;
+        let mut lines = out.lines().map(canonical);
+        let (Some(root), Some(git_dir), Some(common_dir)) = (lines.next(), lines.next(), lines.next()) else {
+            return Err(GitError::Unexpected(format!("rev-parse: {out}")));
+        };
+        Ok(Self {
+            root,
+            git_dir,
+            common_dir,
+            excluded_dirs: excluded_dirs.iter().map(|s| s.to_string()).collect(),
+        })
+    }
+
+    pub fn classify(&self, path: &Path) -> Target {
+        let path = nfc(path);
+        if let Ok(rel) = path.strip_prefix(&self.git_dir) {
+            return classify_git_dir(rel, self.git_dir == self.common_dir);
+        }
+        if let Ok(rel) = path.strip_prefix(&self.common_dir) {
+            return classify_common_dir(rel);
+        }
+        let Ok(rel) = path.strip_prefix(&self.root) else {
+            return Target::Ignore;
+        };
+        let parts: Vec<&str> = rel
+            .components()
+            .filter_map(|c| match c {
+                Component::Normal(s) => s.to_str(),
+                _ => None,
+            })
+            .collect();
+        let excluded = |p: &&str| *p == ".git" || self.excluded_dirs.iter().any(|e| e == p);
+        if parts.is_empty() || parts.iter().any(excluded) {
+            return Target::Ignore;
+        }
+        Target::File(parts.join("/"))
+    }
+
+    /// 감시할 위치. root 안에 들어 있는 위치는 root 감시로 충분하므로 뺀다.
+    pub fn watch_roots(&self) -> Vec<(PathBuf, RecursiveMode)> {
+        let mut roots = vec![(self.root.clone(), RecursiveMode::Recursive)];
+        if !self.git_dir.starts_with(&self.root) {
+            roots.push((self.git_dir.clone(), RecursiveMode::Recursive));
+        }
+        if !self.common_dir.starts_with(&self.root) {
+            roots.push((self.common_dir.join("refs"), RecursiveMode::Recursive));
+            roots.push((self.common_dir.clone(), RecursiveMode::NonRecursive)); // packed-refs
+        }
+        roots
+    }
+}
+
+/// git-dir 안의 경로. 메인 worktree는 git-dir == common-dir이라 refs도 여기서 판단한다.
+fn classify_git_dir(rel: &Path, is_common: bool) -> Target {
+    if is_lock(rel) {
+        return Target::Ignore;
+    }
+    match first(rel) {
+        Some("HEAD" | "index") => Target::List,
+        Some("refs" | "packed-refs") if is_common => Target::Base,
+        _ => Target::Ignore,
+    }
+}
+
+fn classify_common_dir(rel: &Path) -> Target {
+    if is_lock(rel) {
+        return Target::Ignore;
+    }
+    match first(rel) {
+        Some("refs" | "packed-refs") => Target::Base,
+        _ => Target::Ignore,
+    }
+}
+
+fn first(rel: &Path) -> Option<&str> {
+    rel.components().next().and_then(|c| c.as_os_str().to_str())
+}
+
+/// git 내부 lock 파일 (`index.lock`, `refs/heads/x.lock`). 작업 폴더에는 적용하지 않는다.
+fn is_lock(rel: &Path) -> bool {
+    rel.extension().is_some_and(|e| e == "lock")
+}
+
+fn canonical(p: &str) -> PathBuf {
+    let p = Path::new(p);
+    nfc(&p.canonicalize().unwrap_or_else(|_| p.to_path_buf()))
+}
+
+/// macOS FSEvents는 NFD 경로를 줄 수 있고 git(core.precomposeUnicode)은 NFC를 쓴다
+fn nfc(path: &Path) -> PathBuf {
+    PathBuf::from(path.to_string_lossy().nfc().collect::<String>())
+}

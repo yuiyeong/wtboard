@@ -2,3 +2,5 @@
 pub mod git;
 pub mod store;
 pub mod domain;
+pub mod profile;
+pub mod watch;
