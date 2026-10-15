@@ -1,20 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { RepoSummary, WorktreeSummary } from '../api';
+import { worktreeFixture } from './fixtures';
 import { resolveSelection, worktreeLabel } from './selection';
 
-const wt = (id: string, branch: string | null = id): WorktreeSummary => ({
-  id,
-  path: `/dev/${id}`,
-  branch,
-  base: 'origin/main',
-  baseSource: 'origin',
-  changedFiles: 0,
-  profile: 'default',
-  lastChangedAt: null,
-  slowListMs: null,
-  fsmonitor: false,
-  error: null,
-});
+const wt = (id: string, branch: string | null = id) => worktreeFixture({ id, path: `/dev/${id}`, branch });
 const repo = (id: string, ...worktrees: WorktreeSummary[]): RepoSummary => ({ id, name: id, profile: 'default', worktrees });
 const repos = [repo('a', wt('a1'), wt('a2')), repo('b', wt('b1'))];
 

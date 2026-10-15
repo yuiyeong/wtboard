@@ -1,11 +1,17 @@
+import { create } from 'zustand';
 import type { WorktreeSummary } from '../api';
 import { FSMONITOR_COMMANDS, showFsmonitorBanner } from '../lib/banner';
-import { useUiStore } from '../store';
+
+/** banner를 닫은 레포 id. 앱 실행 중에만 기억한다 (저장하지 않음) */
+const useDismissed = create<{ repos: string[]; dismiss: (repoId: string) => void }>((set) => ({
+  repos: [],
+  dismiss: (repoId) => set((s) => (s.repos.includes(repoId) ? s : { repos: [...s.repos, repoId] })),
+}));
 
 export function FsmonitorBanner({ repoId, worktree }: { repoId: string; worktree: WorktreeSummary }) {
-  const dismissed = useUiStore((s) => s.dismissedBanners);
-  const dismiss = useUiStore((s) => s.dismissBanner);
-  if (!showFsmonitorBanner(worktree, repoId, dismissed)) return null;
+  const dismissed = useDismissed((s) => s.repos.includes(repoId));
+  const dismiss = useDismissed((s) => s.dismiss);
+  if (!showFsmonitorBanner(worktree, dismissed)) return null;
   return (
     <div className="flex items-start gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm">
       <div className="flex-1">
