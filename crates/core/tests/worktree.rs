@@ -230,15 +230,15 @@ fn pr_base_replaces_origin_head_and_emits_base_scope() {
     let wt = Worktree::open_with(clone.path(), None, gh).unwrap();
     assert_eq!(wt.summary().base_source, BaseSource::Origin);
 
-    assert!(wt.claim_pr_lookup());
-    assert!(!wt.claim_pr_lookup(), "같은 브랜치는 다시 묻지 않는다");
-    let ev = wt.refresh_pr_base().unwrap().expect("base changed");
+    assert_eq!(wt.claim_pr_lookup().as_deref(), Some("feat"));
+    assert_eq!(wt.claim_pr_lookup(), None, "같은 브랜치는 다시 묻지 않는다");
+    let ev = wt.refresh_pr_base("feat").unwrap().expect("base changed");
     assert_eq!(ev.scope, ChangeScope::Base);
     let s = wt.summary();
     assert_eq!((s.base.as_str(), s.base_source), ("origin/develop", BaseSource::Pr));
 
     clone.git(&["checkout", "-q", "-b", "feat2"]);
-    assert!(wt.claim_pr_lookup(), "브랜치가 바뀌면 다시 묻는다");
+    assert_eq!(wt.claim_pr_lookup().as_deref(), Some("feat2"), "브랜치가 바뀌면 다시 묻는다");
 }
 
 #[test]
@@ -246,8 +246,8 @@ fn pr_base_without_local_remote_ref_keeps_origin_head() {
     let (_up, clone) = clone_on_feat_with_develop();
     let (_d, gh) = gh_stub("release"); // origin/release 없음
     let wt = Worktree::open_with(clone.path(), None, gh).unwrap();
-    assert!(wt.claim_pr_lookup());
-    assert_eq!(wt.refresh_pr_base().unwrap(), None);
+    assert!(wt.claim_pr_lookup().is_some());
+    assert_eq!(wt.refresh_pr_base("feat").unwrap(), None);
     assert_eq!(wt.summary().base_source, BaseSource::Origin);
 }
 
@@ -256,7 +256,7 @@ fn configured_base_never_asks_gh() {
     let (_up, clone) = clone_on_feat_with_develop();
     let (_d, gh) = gh_stub("develop");
     let wt = Worktree::open_with(clone.path(), Some("origin/main".into()), gh).unwrap();
-    assert!(!wt.claim_pr_lookup());
+    assert_eq!(wt.claim_pr_lookup(), None);
 }
 
 /// Review Focus 5: detached HEAD에는 PR이 없다
@@ -266,5 +266,20 @@ fn detached_head_never_asks_gh() {
     clone.git(&["checkout", "-q", "--detach"]);
     let (_d, gh) = gh_stub("develop");
     let wt = Worktree::open_with(clone.path(), None, gh).unwrap();
-    assert!(!wt.claim_pr_lookup());
+    assert_eq!(wt.claim_pr_lookup(), None);
+}
+
+/// final review #2: 브랜치를 바꾸는 사이 늦게 온 gh 결과가 새 브랜치의 base가 되면 안 된다
+#[test]
+fn late_pr_result_for_a_previous_branch_is_discarded() {
+    let (_up, clone) = clone_on_feat_with_develop();
+    let (_d, gh) = gh_stub("develop");
+    let wt = Worktree::open_with(clone.path(), None, gh).unwrap();
+    assert_eq!(wt.claim_pr_lookup().as_deref(), Some("feat"));
+    clone.git(&["checkout", "-q", "-b", "feat2"]);
+    assert_eq!(wt.claim_pr_lookup().as_deref(), Some("feat2"));
+
+    // feat를 위해 물었던 결과가 이제야 도착했다
+    assert_eq!(wt.refresh_pr_base("feat").unwrap(), None);
+    assert_eq!(wt.summary().base_source, BaseSource::Origin);
 }

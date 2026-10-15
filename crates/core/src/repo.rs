@@ -62,6 +62,8 @@ pub struct Repo {
     git: Git,
     opts: RepoOptions,
     sink: Sink,
+    /// rediscover를 하나씩만 돌린다. 여는 동안(수 초) `worktrees`는 잡지 않는다
+    rediscover_lock: Mutex<()>,
     worktrees: Mutex<Vec<Opened>>,
     watch: OnceLock<RepoWatchHandle>,
 }
@@ -74,6 +76,7 @@ impl Repo {
             git: Git::new(common_dir),
             opts,
             sink,
+            rediscover_lock: Mutex::new(()),
             worktrees: Mutex::new(Vec::new()),
             watch: OnceLock::new(),
         });
@@ -91,16 +94,26 @@ impl Repo {
     /// worktree 목록을 다시 읽는다. 새 worktree와 전에 열지 못한 worktree는 (다시) 열고, 사라진 worktree는 닫는다.
     /// 화면에 보일 목록(경로와 성공 여부)이 바뀌었으면 true
     pub fn rediscover(self: &Arc<Self>) -> Result<bool, GitError> {
+        let _serial = self.rediscover_lock.lock().unwrap();
         let entries = list_worktrees(&self.git)?;
-        let mut opened = self.worktrees.lock().unwrap();
-        let before = signature(&opened);
-        opened.retain(|o| o.result.is_ok() && entries.iter().any(|e| e.path == o.path));
-        let missing: Vec<&WorktreeEntry> =
-            entries.iter().filter(|e| !opened.iter().any(|o| o.path == e.path)).collect();
+        let (before, missing) = {
+            let mut opened = self.worktrees.lock().unwrap();
+            let before = signature(&opened);
+            opened.retain(|o| entries.iter().any(|e| e.path == o.path));
+            // 새 worktree와 전에 열지 못한 worktree. 실패한 것은 새로 열 때까지 목록에 남겨 둔다
+            let missing: Vec<WorktreeEntry> = entries
+                .iter()
+                .filter(|e| !opened.iter().any(|o| o.path == e.path && o.result.is_ok()))
+                .cloned()
+                .collect();
+            (before, missing)
+        };
         let fresh: Vec<Opened> = std::thread::scope(|s| {
             let handles: Vec<_> = missing.iter().map(|e| s.spawn(move || self.open_worktree(e))).collect();
             handles.into_iter().map(|h| h.join().expect("worktree 열기 thread panic")).collect()
         });
+        let mut opened = self.worktrees.lock().unwrap();
+        opened.retain(|o| !fresh.iter().any(|f| f.path == o.path));
         opened.extend(fresh);
         opened.sort_by_key(|o| entries.iter().position(|e| e.path == o.path));
         Ok(signature(&opened) != before)

@@ -200,28 +200,29 @@ impl Worktree {
             .filter(|b| b != "HEAD") // detached HEAD
     }
 
-    /// PR base를 물어야 하면 이 브랜치를 "물었음"으로 표시하고 true.
-    /// config base가 있거나, gh가 없거나, detached HEAD거나, 이 브랜치를 이미 물었으면 false
-    pub fn claim_pr_lookup(&self) -> bool {
+    /// PR base를 물어야 하면 이 브랜치를 "물었음"으로 표시하고 그 브랜치를 돌려준다.
+    /// config base가 있거나, gh가 없거나, detached HEAD거나, 이 브랜치를 이미 물었으면 `None`
+    pub fn claim_pr_lookup(&self) -> Option<String> {
         if self.configured_base.is_some() || !self.gh.enabled() {
-            return false;
+            return None;
         }
-        let Some(branch) = self.branch() else { return false };
+        let branch = self.branch()?;
         let mut meta = self.meta.lock().unwrap();
         if meta.pr_checked.as_deref() == Some(branch.as_str()) {
-            return false;
+            return None;
         }
-        meta.pr_checked = Some(branch);
-        true
+        meta.pr_checked = Some(branch.clone());
+        Some(branch)
     }
 
-    /// gh로 PR base를 물어 base에 반영한다. network 호출이라 수 초 걸릴 수 있다. base가 바뀌면 Base event
-    pub fn refresh_pr_base(&self) -> Result<Option<WorktreeChanged>, WorktreeError> {
+    /// `branch`를 위해 gh로 PR base를 물어 base에 반영한다. network 호출이라 수 초 걸릴 수 있다.
+    /// 그사이 다른 브랜치로 바뀌었으면 결과를 버린다 (새 브랜치의 조회가 따로 돈다). base가 바뀌면 Base event
+    pub fn refresh_pr_base(&self, branch: &str) -> Result<Option<WorktreeChanged>, WorktreeError> {
         let pr = self.gh.pr_base(self.git.cwd()).and_then(|b| remote_branch(&self.git, &b));
         {
             let mut meta = self.meta.lock().unwrap();
-            if meta.pr_base == pr {
-                return Ok(None); // PR이 없거나 base가 그대로
+            if meta.pr_checked.as_deref() != Some(branch) || meta.pr_base == pr {
+                return Ok(None);
             }
             meta.pr_base = pr;
         }

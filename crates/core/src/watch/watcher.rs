@@ -93,11 +93,9 @@ fn run_worker(wt: Arc<Worktree>, rx: mpsc::Receiver<Msg>, poll: Duration, emit: 
 
 /// 이 브랜치의 PR base를 아직 묻지 않았으면 background thread에서 gh를 부른다
 fn lookup_pr(wt: &Arc<Worktree>, emit: &EmitFn) {
-    if !wt.claim_pr_lookup() {
-        return;
-    }
+    let Some(branch) = wt.claim_pr_lookup() else { return };
     let (wt, emit) = (wt.clone(), emit.clone());
-    let _ = std::thread::Builder::new().name("wtboard-gh".into()).spawn(move || match wt.refresh_pr_base() {
+    let _ = std::thread::Builder::new().name("wtboard-gh".into()).spawn(move || match wt.refresh_pr_base(&branch) {
         Ok(Some(ev)) => emit(ev),
         Ok(None) => {}
         Err(e) => eprintln!("[wtboard] {}: PR base 반영 실패: {e}", wt.id()),
