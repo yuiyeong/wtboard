@@ -101,10 +101,9 @@ impl Repo {
             let before = signature(&opened);
             opened.retain(|o| entries.iter().any(|e| e.path == o.path));
             // 새 worktree와 전에 열지 못한 worktree. 실패한 것은 새로 열 때까지 목록에 남겨 둔다
-            let missing: Vec<WorktreeEntry> = entries
+            let missing: Vec<&WorktreeEntry> = entries
                 .iter()
                 .filter(|e| !opened.iter().any(|o| o.path == e.path && o.result.is_ok()))
-                .cloned()
                 .collect();
             (before, missing)
         };
