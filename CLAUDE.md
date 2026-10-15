@@ -14,14 +14,16 @@ pnpm tauri dev               # 앱 실행 (ui dev server + Rust 빌드)
 cargo test                   # Rust 테스트 (실제 git, 실제 FSEvents 사용)
 pnpm --dir ui test           # UI 테스트 (vitest)
 pnpm --dir ui build          # 타입 체크 + 번들
+scripts/fixtures.sh <dir>    # UI 확인용 fixture 레포 3개 + config.toml
+WTBOARD_CONFIG=<dir>/config.toml pnpm tauri dev   # fixture로 실행
 ```
 
-설정: `~/.wtboard/config.toml` (`[[repo]] path = ...`).
+설정: `~/.wtboard/config.toml` (`[[repo]] path = ...`). `WTBOARD_CONFIG`로 경로를 바꿀 수 있다.
 
 ## 구조
 
-- `crates/core`: git CLI 읽기 래퍼(`git/`), 변경 목록·diff·hash, 감시(`watch/`), worktree 상태(`worktree.rs`), 설정(`store/`)
-- `crates/app`: Tauri command(`list_repos`, `list_files`, `get_patch`)와 `worktree-changed` event
+- `crates/core`: git CLI 읽기 래퍼(`git/`), 변경 목록·diff·hash, 감시(`watch/`), worktree 상태(`worktree.rs`), 레포 하나(`repo.rs`), config 전체(`registry.rs`), profile(`profile.rs`), PR base(`gh.rs`), 설정(`store/`)
+- `crates/app`: Tauri command(`list_repos`, `list_files`, `get_patch`)와 `worktree-changed`, `worktrees-updated` event
 - `ui/`: React + TanStack Query + react-diff-view
 
 ## 지켜야 할 것
