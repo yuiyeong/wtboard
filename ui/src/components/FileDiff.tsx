@@ -7,7 +7,7 @@ import { tokenizeHunks } from '../lib/highlight';
 import { languageForPath } from '../lib/language';
 import { useInView } from '../lib/useInView';
 import type { ViewType } from '../store';
-import { LineCounts } from './FileList';
+import { LineCounts } from './FileTree';
 
 interface Props {
   worktreeId: string;

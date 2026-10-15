@@ -1,7 +1,9 @@
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { listFiles, listRepos, type WorktreeSummary } from './api';
 import { FileDiff } from './components/FileDiff';
-import { FileList } from './components/FileList';
+import { FileTree } from './components/FileTree';
+import { buildTree, flattenFiles } from './lib/tree';
 import { useUiStore } from './store';
 import { useWorktreeEvents } from './useWorktreeEvents';
 
@@ -21,6 +23,8 @@ function WorktreeView({ repoName, worktree }: { repoName: string; worktree: Work
     queryKey: ['files', worktree.id, 'branch'],
     queryFn: () => listFiles(worktree.id, 'branch'),
   });
+  const tree = useMemo(() => buildTree(files.data ?? []), [files.data]);
+  const ordered = useMemo(() => flattenFiles(tree), [tree]); // diff 순서를 트리와 맞춘다
 
   return (
     <div className="flex h-screen flex-col">
@@ -44,14 +48,14 @@ function WorktreeView({ repoName, worktree }: { repoName: string; worktree: Work
       <div className="flex min-h-0 flex-1">
         <aside className="w-80 shrink-0 overflow-y-auto border-r border-gray-200">
           <p className="px-3 py-2 text-xs text-gray-500">변경 파일 {files.data?.length ?? 0}개</p>
-          <FileList files={files.data ?? []} />
+          <FileTree nodes={tree} />
         </aside>
         {/* 위쪽 padding을 두면 sticky 파일 헤더가 그만큼 아래에 멈추므로 spacer로 띄운다 */}
         <main className="flex-1 overflow-y-auto px-4 pb-4">
           <div className="h-4" />
           {files.error && <p className="text-red-600">{String(files.error)}</p>}
           {files.data?.length === 0 && <p className="text-gray-500">base 대비 변경 사항이 없습니다.</p>}
-          {files.data?.map((f) => (
+          {ordered.map((f) => (
             <FileDiff key={f.path} worktreeId={worktree.id} file={f} viewType={viewType} />
           ))}
         </main>
