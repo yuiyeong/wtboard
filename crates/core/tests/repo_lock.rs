@@ -32,8 +32,10 @@ fn summary_does_not_wait_for_a_worktree_being_opened() {
     let path = format!("{}:{}", bin.path().display(), std::env::var("PATH").unwrap());
     std::env::set_var("PATH", path);
 
+    // `-b`로 브랜치를 만들면 main worktree가 refs 변경으로 목록을 다시 계산하는데, 그 계산도
+    // wrapper 때문에 2초 걸려 main의 summary가 거기서 기다린다. 레포 단위 lock만 보려고 detach로 만든다
     let wt = repo.path().parent().unwrap().join("wt");
-    repo.git(&["worktree", "add", "-q", "-b", "feat", wt.to_str().unwrap()]);
+    repo.git(&["worktree", "add", "-q", "--detach", wt.to_str().unwrap()]);
     let opener = {
         let r = r.clone();
         std::thread::spawn(move || r.rediscover().unwrap())
