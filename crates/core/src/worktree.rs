@@ -6,8 +6,9 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 
 use crate::domain::{ChangedFile, FilePatch};
+use crate::gh::Gh;
 use crate::git::attrs::linguist_generated;
-use crate::git::base::{merge_base, resolve_base, Base, BaseError, BaseSource};
+use crate::git::base::{merge_base, remote_branch, resolve_base, Base, BaseError, BaseSource};
 use crate::git::changes::list_changes;
 use crate::git::patch::file_patch;
 use crate::git::{Git, GitError};
@@ -100,6 +101,10 @@ struct State {
 struct Meta {
     list_ms: u64,
     last_changed_at: Option<u64>,
+    /// gh가 알려 준 PR base를 로컬 remote 브랜치로 바꾼 것 (`origin/develop`)
+    pr_base: Option<String>,
+    /// PR base를 마지막으로 물어본 브랜치
+    pr_checked: Option<String>,
 }
 
 pub struct Worktree {
@@ -108,12 +113,18 @@ pub struct Worktree {
     layout: WatchLayout,
     profile: Profile,
     configured_base: Option<String>,
+    gh: Gh,
     state: Mutex<State>,
     meta: Mutex<Meta>,
 }
 
 impl Worktree {
     pub fn open(path: &Path, configured_base: Option<String>) -> Result<Arc<Self>, WorktreeError> {
+        Self::open_with(path, configured_base, Gh::disabled())
+    }
+
+    /// `gh`가 켜져 있으면 `claim_pr_lookup` / `refresh_pr_base`로 PR base를 반영할 수 있다
+    pub fn open_with(path: &Path, configured_base: Option<String>, gh: Gh) -> Result<Arc<Self>, WorktreeError> {
         if !path.is_dir() {
             return Err(WorktreeError::Missing(path.to_path_buf()));
         }
@@ -130,8 +141,9 @@ impl Worktree {
             layout,
             profile,
             configured_base,
+            gh,
             state: Mutex::new(State { base, merge_base: mb, files, hashes: HashMap::new() }),
-            meta: Mutex::new(Meta { list_ms, last_changed_at: None }),
+            meta: Mutex::new(Meta { list_ms, ..Default::default() }),
         }))
     }
 
@@ -188,6 +200,28 @@ impl Worktree {
             .filter(|b| b != "HEAD") // detached HEAD
     }
 
+    /// PR base를 물어야 하면 이 브랜치를 "물었음"으로 표시하고 true.
+    /// config base가 있거나, gh가 없거나, detached HEAD거나, 이 브랜치를 이미 물었으면 false
+    pub fn claim_pr_lookup(&self) -> bool {
+        if self.configured_base.is_some() || !self.gh.enabled() {
+            return false;
+        }
+        let Some(branch) = self.branch() else { return false };
+        let mut meta = self.meta.lock().unwrap();
+        if meta.pr_checked.as_deref() == Some(branch.as_str()) {
+            return false;
+        }
+        meta.pr_checked = Some(branch);
+        true
+    }
+
+    /// gh로 PR base를 물어 base에 반영한다. network 호출이라 수 초 걸릴 수 있다. base가 바뀌면 Base event
+    pub fn refresh_pr_base(&self) -> Result<Option<WorktreeChanged>, WorktreeError> {
+        let pr = self.gh.pr_base(self.git.cwd()).and_then(|b| remote_branch(&self.git, &b));
+        self.meta.lock().unwrap().pr_base = pr;
+        self.refresh_base()
+    }
+
     pub fn patch(&self, path: &str) -> Result<FilePatch, WorktreeError> {
         let mut st = self.state.lock().unwrap();
         let file = st.files.get(path).cloned().ok_or_else(|| WorktreeError::UnknownFile(path.to_owned()))?;
@@ -235,7 +269,8 @@ impl Worktree {
     }
 
     fn refresh_base(&self) -> Result<Option<WorktreeChanged>, WorktreeError> {
-        let base = resolve_base(&self.git, self.configured_base.as_deref(), None)?;
+        let pr = self.meta.lock().unwrap().pr_base.clone();
+        let base = resolve_base(&self.git, self.configured_base.as_deref(), pr.as_deref())?;
         let mb = merge_base(&self.git, &base.name)?;
         let unchanged = {
             let st = self.state.lock().unwrap();

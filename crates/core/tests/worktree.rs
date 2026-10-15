@@ -2,7 +2,7 @@ mod common;
 
 use std::path::Path;
 
-use common::TestRepo;
+use common::{clone_on_feat_with_develop, gh_stub, TestRepo};
 use wtboard_core::git::base::BaseSource;
 use wtboard_core::profile::Profile;
 use wtboard_core::watch::Target;
@@ -221,4 +221,50 @@ fn editing_gitignore_drops_newly_ignored_files() {
     repo.write(".gitignore", "dist/\n");
     wt.handle(&[file(".gitignore")]).unwrap().expect("should emit");
     assert_eq!(paths(&wt), [".gitignore"]);
+}
+
+#[test]
+fn pr_base_replaces_origin_head_and_emits_base_scope() {
+    let (_up, clone) = clone_on_feat_with_develop();
+    let (_d, gh) = gh_stub("develop");
+    let wt = Worktree::open_with(clone.path(), None, gh).unwrap();
+    assert_eq!(wt.summary().base_source, BaseSource::Origin);
+
+    assert!(wt.claim_pr_lookup());
+    assert!(!wt.claim_pr_lookup(), "같은 브랜치는 다시 묻지 않는다");
+    let ev = wt.refresh_pr_base().unwrap().expect("base changed");
+    assert_eq!(ev.scope, ChangeScope::Base);
+    let s = wt.summary();
+    assert_eq!((s.base.as_str(), s.base_source), ("origin/develop", BaseSource::Pr));
+
+    clone.git(&["checkout", "-q", "-b", "feat2"]);
+    assert!(wt.claim_pr_lookup(), "브랜치가 바뀌면 다시 묻는다");
+}
+
+#[test]
+fn pr_base_without_local_remote_ref_keeps_origin_head() {
+    let (_up, clone) = clone_on_feat_with_develop();
+    let (_d, gh) = gh_stub("release"); // origin/release 없음
+    let wt = Worktree::open_with(clone.path(), None, gh).unwrap();
+    assert!(wt.claim_pr_lookup());
+    assert_eq!(wt.refresh_pr_base().unwrap(), None);
+    assert_eq!(wt.summary().base_source, BaseSource::Origin);
+}
+
+#[test]
+fn configured_base_never_asks_gh() {
+    let (_up, clone) = clone_on_feat_with_develop();
+    let (_d, gh) = gh_stub("develop");
+    let wt = Worktree::open_with(clone.path(), Some("origin/main".into()), gh).unwrap();
+    assert!(!wt.claim_pr_lookup());
+}
+
+/// Review Focus 5: detached HEAD에는 PR이 없다
+#[test]
+fn detached_head_never_asks_gh() {
+    let (_up, clone) = clone_on_feat_with_develop();
+    clone.git(&["checkout", "-q", "--detach"]);
+    let (_d, gh) = gh_stub("develop");
+    let wt = Worktree::open_with(clone.path(), None, gh).unwrap();
+    assert!(!wt.claim_pr_lookup());
 }

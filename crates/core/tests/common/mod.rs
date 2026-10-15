@@ -88,3 +88,22 @@ fn run(cwd: &Path, args: &[&str]) -> String {
     assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
     String::from_utf8_lossy(&out.stdout).trim().to_owned()
 }
+
+/// `echo <base>`만 하는 가짜 gh. 반환한 TempDir가 살아 있는 동안 유효하다
+pub fn gh_stub(base: &str) -> (tempfile::TempDir, wtboard_core::gh::Gh) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("gh");
+    fs::write(&p, format!("#!/bin/sh\necho {base}\n")).unwrap();
+    fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+    (dir, wtboard_core::gh::Gh::with_bin(Some(p)))
+}
+
+/// `develop` 브랜치가 있는 upstream의 clone에서 `feat` 브랜치로 옮긴 레포. (upstream, clone)
+pub fn clone_on_feat_with_develop() -> (TestRepo, TestRepo) {
+    let upstream = TestRepo::new();
+    upstream.git(&["branch", "develop"]);
+    let clone = TestRepo::clone_of(&upstream);
+    clone.git(&["checkout", "-q", "-b", "feat"]);
+    (upstream, clone)
+}

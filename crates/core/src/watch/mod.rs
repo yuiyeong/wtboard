@@ -1,6 +1,6 @@
 mod watcher;
 
-pub use watcher::{spawn_watcher, EmitFn, WatchHandle};
+pub use watcher::{spawn_watcher, spawn_watcher_with, EmitFn, GoneFn, WatchHandle};
 
 use std::path::{Component, Path, PathBuf};
 

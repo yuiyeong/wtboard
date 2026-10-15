@@ -4,8 +4,9 @@ use std::path::Path;
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
-use common::TestRepo;
-use wtboard_core::watch::{spawn_watcher, WatchHandle};
+use common::{clone_on_feat_with_develop, gh_stub, TestRepo};
+use wtboard_core::git::base::BaseSource;
+use wtboard_core::watch::{spawn_watcher, spawn_watcher_with, WatchHandle};
 use wtboard_core::worktree::{ChangeScope, Worktree, WorktreeChanged};
 
 fn start(path: &Path) -> (WatchHandle, mpsc::Receiver<WorktreeChanged>) {
@@ -57,4 +58,36 @@ fn linked_worktree_edit_is_detected() {
     std::fs::write(wt_path.join("new.txt"), "n\n").unwrap();
     let ev = rx.recv_timeout(Duration::from_secs(3)).expect("no event");
     assert_eq!(ev.changed_paths, vec!["new.txt".to_string()]);
+}
+
+#[test]
+fn pr_base_lookup_runs_in_background_after_start() {
+    let (_up, clone) = clone_on_feat_with_develop();
+    let (_d, gh) = gh_stub("develop");
+    let wt = Worktree::open_with(clone.path(), None, gh).unwrap();
+    let (tx, rx) = mpsc::channel();
+    let _h = spawn_watcher(wt.clone(), Duration::from_secs(30), Arc::new(move |ev| {
+        let _ = tx.send(ev);
+    }))
+    .unwrap();
+    let ev = rx.recv_timeout(Duration::from_secs(3)).expect("no base event");
+    assert_eq!(ev.scope, ChangeScope::Base);
+    assert_eq!(wt.summary().base_source, BaseSource::Pr);
+}
+
+#[test]
+fn deleted_worktree_folder_calls_on_gone() {
+    let repo = TestRepo::new();
+    let wt_path = repo.path().parent().unwrap().join("wt");
+    repo.git(&["worktree", "add", "-q", "-b", "feat", wt_path.to_str().unwrap()]);
+    let wt = Worktree::open(&wt_path, Some("main".into())).unwrap();
+    let (tx, rx) = mpsc::channel::<()>();
+    let _h = spawn_watcher_with(wt, Duration::from_secs(30), Arc::new(|_| {}), Arc::new(move || {
+        let _ = tx.send(());
+    }))
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+
+    std::fs::remove_dir_all(&wt_path).unwrap();
+    rx.recv_timeout(Duration::from_secs(3)).expect("on_gone not called");
 }
