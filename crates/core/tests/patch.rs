@@ -93,3 +93,30 @@ fn serializes_for_the_ui() {
         serde_json::json!({"kind": "tooLarge", "oldSize": 1, "newSize": null})
     );
 }
+
+/// 결과가 5초 안에 오지 않으면 실패 (무한 읽기 회귀 방지)
+fn within_5s<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(5)).expect("hung reading a special file")
+}
+
+#[test]
+fn untracked_symlink_to_special_file_does_not_hang() {
+    let repo = TestRepo::new();
+    let mb = repo.head();
+    // 링크 대상이 FIFO면 따라가서 읽는 순간 영원히 멈춘다 (/dev/zero면 메모리를 끝없이 쓴다)
+    let fifo = repo.path().parent().unwrap().join("pipe");
+    assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+    std::os::unix::fs::symlink(&fifo, repo.path().join("link")).unwrap();
+    let root = repo.path().to_path_buf();
+    let patch = within_5s(move || {
+        let git = Git::new(&root);
+        let file = list_changes(&git, &mb, &["link"]).unwrap().into_iter().next().expect("symlink listed");
+        file_patch(&git, &mb, &file).unwrap()
+    });
+    let target = fifo.to_string_lossy().into_owned();
+    assert!(text(&patch).contains(&format!("+{target}")), "symlink은 git처럼 링크 대상을 보여 준다: {patch:?}");
+}

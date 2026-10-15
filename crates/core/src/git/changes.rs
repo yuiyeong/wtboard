@@ -79,9 +79,14 @@ fn parse_numstat(buf: &[u8]) -> HashMap<String, (Option<u32>, Option<u32>)> {
         .collect()
 }
 
-/// untracked 텍스트 파일의 줄 수. 바이너리이거나 너무 크면 `None`
+/// untracked 텍스트 파일의 줄 수. 바이너리이거나 너무 크면 `None`.
+/// symlink는 따라가지 않는다 (git처럼 링크 대상 경로 한 줄로 본다). FIFO 같은 특수 파일은 읽지 않는다.
 fn count_text_lines(path: &Path) -> Option<u32> {
-    if fs::metadata(path).ok()?.len() > MAX_DIFF_BYTES {
+    let meta = fs::symlink_metadata(path).ok()?;
+    if meta.file_type().is_symlink() {
+        return Some(1);
+    }
+    if !meta.is_file() || meta.len() > MAX_DIFF_BYTES {
         return None;
     }
     let bytes = fs::read(path).ok()?;
