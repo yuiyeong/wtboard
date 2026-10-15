@@ -46,7 +46,9 @@ function WorktreeView({ repoName, worktree }: { repoName: string; worktree: Work
           <p className="px-3 py-2 text-xs text-gray-500">변경 파일 {files.data?.length ?? 0}개</p>
           <FileList files={files.data ?? []} />
         </aside>
-        <main className="flex-1 overflow-y-auto p-4">
+        {/* 위쪽 padding을 두면 sticky 파일 헤더가 그만큼 아래에 멈추므로 spacer로 띄운다 */}
+        <main className="flex-1 overflow-y-auto px-4 pb-4">
+          <div className="h-4" />
           {files.error && <p className="text-red-600">{String(files.error)}</p>}
           {files.data?.length === 0 && <p className="text-gray-500">base 대비 변경 사항이 없습니다.</p>}
           {files.data?.map((f) => (
