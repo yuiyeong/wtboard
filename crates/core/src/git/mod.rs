@@ -1,5 +1,6 @@
 pub mod base;
 pub mod changes;
+pub mod patch;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

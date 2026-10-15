@@ -21,3 +21,19 @@ pub struct ChangedFile {
     pub additions: Option<u32>,
     pub deletions: Option<u32>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum PatchBody {
+    Text { diff: String },
+    Binary { old_size: Option<u64>, new_size: Option<u64> },
+    TooLarge { old_size: Option<u64>, new_size: Option<u64> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FilePatch {
+    pub path: String,
+    pub body: PatchBody,
+    /// diff 내용의 blake3 hash. 바이너리/큰 파일은 파일 내용 기준
+    pub hash: String,
+}
