@@ -45,8 +45,8 @@ pub fn resolve_base(git: &Git, configured: Option<&str>, pr: Option<&str>) -> Re
 pub fn remote_branch(git: &Git, branch: &str) -> Option<String> {
     let name = format!("origin/{branch}");
     git.run(&["rev-parse", "--verify", "--quiet", &format!("refs/remotes/{name}")])
-        .ok()
-        .map(|_| name)
+        .is_ok()
+        .then_some(name)
 }
 
 pub fn merge_base(git: &Git, base: &str) -> Result<String, GitError> {
