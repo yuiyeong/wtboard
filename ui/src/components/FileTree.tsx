@@ -93,3 +93,20 @@ export function LineCounts({ file }: { file: ChangedFile }) {
     </span>
   );
 }
+
+/** 생성·lock 파일 묶음. 기본으로 닫혀 있다 */
+export function CollapsedGroup({ count, nodes }: { count: number; nodes: TreeNode[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-2 border-t border-gray-200 pt-1">
+      <button
+        className="flex w-full items-center gap-1 px-3 py-0.5 text-left text-sm text-gray-500 hover:bg-gray-100"
+        onClick={() => setOpen(!open)}
+      >
+        <span className="w-3 text-xs">{open ? '▾' : '▸'}</span>
+        <span>접힌 파일 ({count})</span>
+      </button>
+      {open && <FileTree nodes={nodes} />}
+    </div>
+  );
+}

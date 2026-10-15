@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChangedFile } from '../api';
-import { buildTree, flattenFiles, type TreeNode } from './tree';
+import { buildTree, flattenFiles, splitCollapsed, type TreeNode } from './tree';
 
 const f = (path: string): ChangedFile => ({ path, status: 'modified', additions: 1, deletions: 0, collapsed: false });
 
@@ -27,5 +27,15 @@ describe('flattenFiles', () => {
   it('트리에 보이는 순서대로 파일을 돌려준다', () => {
     const files = [f('z.py'), f('app/b.py'), f('app/a.py')];
     expect(flattenFiles(buildTree(files)).map((x) => x.path)).toEqual(['app/a.py', 'app/b.py', 'z.py']);
+  });
+});
+
+describe('splitCollapsed', () => {
+  it('접힌 파일을 따로 모으고 나머지 순서는 그대로 둔다', () => {
+    const gen = { ...f('lib/user.g.dart'), collapsed: true };
+    const lock = { ...f('pubspec.lock'), collapsed: true };
+    const { visible, collapsed } = splitCollapsed([f('lib/a.dart'), gen, f('lib/b.dart'), lock]);
+    expect(visible.map((x) => x.path)).toEqual(['lib/a.dart', 'lib/b.dart']);
+    expect(collapsed.map((x) => x.path)).toEqual(['lib/user.g.dart', 'pubspec.lock']);
   });
 });

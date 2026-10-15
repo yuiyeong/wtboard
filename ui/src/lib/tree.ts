@@ -55,3 +55,8 @@ function compact(dir: DirNode): DirNode {
 export function flattenFiles(nodes: TreeNode[]): ChangedFile[] {
   return nodes.flatMap((n) => (n.kind === 'file' ? [n.file] : flattenFiles(n.children)));
 }
+
+/** 접힌 파일(생성·lock 파일)과 나머지로 나눈다 */
+export function splitCollapsed(files: ChangedFile[]): { visible: ChangedFile[]; collapsed: ChangedFile[] } {
+  return { visible: files.filter((f) => !f.collapsed), collapsed: files.filter((f) => f.collapsed) };
+}
