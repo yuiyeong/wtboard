@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { App } from './App';
+import 'react-diff-view/style/index.css';
 import './index.css';
 
 // 데이터는 worktree-changed event로만 갱신한다 (Task 10)
