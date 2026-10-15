@@ -61,7 +61,8 @@ impl Registry {
         }
 
         let poll = config.watch.poll_interval();
-        let opened: Vec<Result<Arc<Repo>, EntryError>> = std::thread::scope(|s| {
+        let mut repos = Vec::new();
+        std::thread::scope(|s| {
             let handles: Vec<_> = groups
                 .iter()
                 .map(|g| {
@@ -73,20 +74,22 @@ impl Registry {
                     })
                 })
                 .collect();
-            handles.into_iter().map(|h| h.join().expect("레포 열기 thread panic")).collect()
-        });
-        let mut repos = Vec::new();
-        for r in opened {
-            match r {
-                Ok(repo) => repos.push(repo),
-                Err(e) => errors.push(e),
+            for h in handles {
+                match h.join().expect("레포 열기 thread panic") {
+                    Ok(repo) => repos.push(repo),
+                    Err(e) => errors.push(e),
+                }
             }
-        }
+        });
         Self { repos, errors }
     }
 
+    /// 화면이 파일 event마다 부른다. worktree마다 git을 부르므로 레포끼리 병렬로 한다
     pub fn repos(&self) -> Vec<RepoSummary> {
-        self.repos.iter().map(|r| r.summary()).collect()
+        std::thread::scope(|s| {
+            let handles: Vec<_> = self.repos.iter().map(|r| s.spawn(|| r.summary())).collect();
+            handles.into_iter().map(|h| h.join().expect("레포 summary thread panic")).collect()
+        })
     }
 
     pub fn errors(&self) -> &[EntryError] {
