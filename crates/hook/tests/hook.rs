@@ -1,7 +1,10 @@
 mod common;
 
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::fs;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -96,6 +99,10 @@ fn any_input_exits_zero_with_empty_stdout() {
         let out = run_with_stdin(hook_command(data.path(), args), stdin);
         assert_quiet_exit(&out);
     }
+    // UTF-8이 아닌 argv
+    let mut cmd = hook_command(data.path(), &[]);
+    cmd.arg(OsStr::from_bytes(b"turn-\xff"));
+    assert_quiet_exit(&run_with_stdin(cmd, br#"{"session_id":"s","cwd":"/"}"#));
     // 모든 subcommand가 session_id 없는 입력에서 조용히 끝난다
     for sub in [
         "session-start", "prompt-submit", "pre-edit", "post-edit", "pre-bash", "post-bash",
@@ -451,4 +458,30 @@ fn hook_never_touches_git_index() {
     assert_eq!(fs::read(&index).unwrap(), bytes);
     assert_eq!(fs::metadata(&index).unwrap().modified().unwrap(), mtime);
     assert_eq!(repo.git(&["status", "--porcelain"]), status);
+}
+
+/// 세션 기록에는 편집한 파일(.env 등)의 원본이 들어간다. 다른 사용자가 못 읽어야 한다
+#[test]
+fn session_records_are_private() {
+    let data = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let secret = work.path().join("cfg/.env");
+    fs::create_dir_all(secret.parent().unwrap()).unwrap();
+    fs::write(&secret, "TOKEN=1\n").unwrap();
+    fs::set_permissions(&secret, fs::Permissions::from_mode(0o644)).unwrap();
+
+    hook(data.path(), "session-start", SID, work.path(), "SessionStart");
+    prompt(data.path(), SID);
+    edit(data.path(), SID, &secret, Some("TOKEN=2\n"));
+    hook(data.path(), "turn-end", SID, work.path(), "Stop");
+
+    let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    let sessions = data.path().join("sessions");
+    assert_eq!(mode(&sessions), 0o700);
+    let all = tree(&sessions);
+    assert!(all.iter().any(|p| p.ends_with("turns/1/index.jsonl")));
+    for p in all {
+        let want = if p.is_dir() { 0o700 } else { 0o600 };
+        assert_eq!(mode(&p), want, "{}", p.display());
+    }
 }

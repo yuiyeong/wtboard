@@ -34,7 +34,11 @@ pub struct HookInput {
 }
 
 fn main() {
-    let sub = std::env::args().nth(1).unwrap_or_default();
+    // `args()`는 UTF-8이 아닌 인자에서 panic한다
+    let sub = std::env::args_os()
+        .nth(1)
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
     // 기본 panic hook은 여러 줄을 찍는다. 메시지는 아래에서 한 줄로 남긴다
     panic::set_hook(Box::new(|_| {}));
     let message = match panic::catch_unwind(AssertUnwindSafe(|| run(&sub))) {

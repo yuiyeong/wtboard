@@ -333,3 +333,52 @@ fn config_sessions_keep_days_default() {
     let cfg = Config::parse("[sessions]\nkeep_days = 3\n").unwrap();
     assert_eq!(cfg.sessions.keep_days, 3);
 }
+
+/// `root`와 그 아래 폴더는 0700, 파일은 0600이어야 한다
+fn assert_private_tree(root: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(root), 0o700, "{}", root.display());
+    let mut stack = vec![root.to_path_buf()];
+    let mut files = 0;
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_dir() {
+                assert_eq!(mode(&p), 0o700, "{}", p.display());
+                stack.push(p);
+            } else {
+                assert_eq!(mode(&p), 0o600, "{}", p.display());
+                files += 1;
+            }
+        }
+    }
+    assert!(files > 0);
+}
+
+#[test]
+fn session_files_are_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let data = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let secret = work.path().join("cfg/.env");
+    fs::create_dir_all(secret.parent().unwrap()).unwrap();
+    fs::write(&secret, "TOKEN=1\n").unwrap();
+    fs::set_permissions(&secret, fs::Permissions::from_mode(0o644)).unwrap();
+    let big = work.path().join("big.bin");
+    fs::write(&big, vec![0u8; MAX_DIFF_BYTES as usize + 1]).unwrap();
+
+    let dir = SessionDir::open(data.path(), "s1").unwrap();
+    dir.write_meta(&meta()).unwrap();
+    dir.append_event(&event(1, secret.to_str().unwrap())).unwrap();
+    dir.ensure_baseline(&secret, BaselineContent::CopyOf(&secret)).unwrap();
+    dir.ensure_baseline(&big, BaselineContent::CopyOf(&big)).unwrap();
+    dir.ensure_baseline(&work.path().join("new.txt"), BaselineContent::New).unwrap();
+    dir.snapshot_turn(1, &[secret.clone(), big.clone()]).unwrap();
+    // 같은 turn을 다시 찍어도 (덮어쓰기) 그대로
+    dir.snapshot_turn(1, &[secret.clone()]).unwrap();
+
+    assert_private_tree(&data.path().join("sessions"));
+    let Some(Snapshot::Content(snap)) = dir.turn_snapshot(1, &secret) else { panic!() };
+    assert_eq!(fs::read_to_string(snap).unwrap(), "TOKEN=1\n");
+}

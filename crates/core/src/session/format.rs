@@ -7,9 +7,13 @@
 //! - `turns/<n>/<abs>`, `turns/<n>/index.jsonl`: turn 경계 hook만 쓴다
 //!
 //! 경로 key는 NFC 절대 경로다. 내용 파일은 절대 경로에서 앞의 `/`를 뗀 경로에 둔다.
+//!
+//! 기록에는 세션이 편집한 파일(`.env` 등)의 원본이 들어가므로 다른 사용자가 못 읽게 폴더는 0700,
+//! 파일은 0600으로 만든다 (`create_private_dir`, `private_file`).
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -25,6 +29,8 @@ const BASELINE_DIR: &str = "baseline";
 const BASELINES: &str = "baseline.jsonl";
 const TURNS: &str = "turns";
 const TURN_INDEX: &str = "index.jsonl";
+const DIR_MODE: u32 = 0o700;
+const FILE_MODE: u32 = 0o600;
 
 /// `[A-Za-z0-9_-]+`만 허용한다. 폴더 이름으로 쓰므로 `/`, `..`가 들어오면 세션 폴더 밖에 쓰게 된다
 pub fn is_valid_session_id(id: &str) -> bool {
@@ -167,7 +173,7 @@ impl SessionDir {
 
     /// tmp에 쓰고 rename한다. 앱이 반쯤 쓴 meta를 읽지 않는다
     pub fn write_meta(&self, meta: &Meta) -> io::Result<()> {
-        fs::create_dir_all(&self.root)?;
+        create_private_dir(&self.root)?;
         write_atomic(&self.root.join(META), &serde_json::to_vec(meta)?)
     }
 
@@ -198,9 +204,9 @@ impl SessionDir {
         let path = valid_abs_path(path).ok_or_else(|| invalid_path(path))?;
         let file = self.baseline_file(&path);
         if let Some(dir) = file.parent() {
-            fs::create_dir_all(dir)?;
+            create_private_dir(dir)?;
         }
-        let mut out = match OpenOptions::new().write(true).create_new(true).open(&file) {
+        let mut out = match private_file().create_new(true).open(&file) {
             Ok(f) => f,
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Ok(false),
             Err(e) => return Err(e),
@@ -233,7 +239,7 @@ impl SessionDir {
     /// (읽기 실패, 그사이 사라짐 등)가 다른 경로를 막지 않는다. 그런 경로와 잘못된 경로는 건너뛴다
     pub fn snapshot_turn(&self, turn: u32, paths: &[PathBuf]) -> io::Result<()> {
         let dir = self.turn_dir(turn);
-        fs::create_dir_all(&dir)?;
+        create_private_dir(&dir)?;
         let mut index = Vec::new();
         for path in paths.iter().filter_map(|p| valid_abs_path(p)) {
             if let Ok(Some(state)) = snapshot_file(&path, &mirror(&dir, &path)) {
@@ -266,8 +272,8 @@ impl SessionDir {
     /// 줄 전체를 write 한 번으로 쓴다. `O_APPEND`라 병렬 hook의 줄이 섞이지 않는다
     fn append_line(&self, name: &str, value: &impl Serialize) -> io::Result<()> {
         let line = json_line(value)?;
-        fs::create_dir_all(&self.root)?;
-        let mut f = OpenOptions::new().create(true).append(true).open(self.root.join(name))?;
+        create_private_dir(&self.root)?;
+        let mut f = private_file().create(true).append(true).open(self.root.join(name))?;
         let n = f.write(&line)?;
         if n != line.len() {
             return Err(io::Error::new(io::ErrorKind::WriteZero, "줄 일부만 씀"));
@@ -293,7 +299,12 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(format!(".{}.tmp", std::process::id()));
     let tmp = PathBuf::from(tmp);
-    let written = fs::write(&tmp, bytes).and_then(|()| fs::rename(&tmp, path));
+    let written = private_file()
+        .create(true)
+        .truncate(true)
+        .open(&tmp)
+        .and_then(|mut f| f.write_all(bytes))
+        .and_then(|()| fs::rename(&tmp, path));
     if written.is_err() {
         let _ = fs::remove_file(&tmp);
     }
@@ -357,14 +368,30 @@ fn snapshot_file(path: &Path, dest: &Path) -> io::Result<Option<TurnState>> {
         let (size, hash) = hash_reader(File::open(path)?)?;
         return Ok(Some(TurnState::TooLarge { size, hash }));
     }
+    // `fs::copy`는 원본 권한을 따라가므로 0600으로 만든 파일에 내용을 붓는다
+    let mut src = match File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Some(TurnState::Deleted)),
+        Err(e) => return Err(e),
+    };
     if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
+        create_private_dir(parent)?;
     }
-    match fs::copy(path, dest) {
-        Ok(_) => Ok(None),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Some(TurnState::Deleted)),
-        Err(e) => Err(e),
-    }
+    let mut out = private_file().create(true).truncate(true).open(dest)?;
+    io::copy(&mut src, &mut out)?;
+    Ok(None)
+}
+
+/// 없는 폴더를 0700으로 만든다 (중간 폴더 포함). 이미 있는 폴더의 권한은 건드리지 않는다
+fn create_private_dir(dir: &Path) -> io::Result<()> {
+    fs::DirBuilder::new().recursive(true).mode(DIR_MODE).create(dir)
+}
+
+/// 새로 만들 때 0600인 쓰기용 `OpenOptions`
+fn private_file() -> OpenOptions {
+    let mut opts = OpenOptions::new();
+    opts.write(true).mode(FILE_MODE);
+    opts
 }
 
 /// 읽은 바이트 수와 blake3 hash (hex)
