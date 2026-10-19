@@ -344,3 +344,23 @@ fn new_folder_in_batch_still_catches_checked_edit() {
     assert!(ev.changed_paths.contains(&"src/a.py".to_string()), "{ev:?}");
     assert_eq!(state(&wt, "src/a.py"), ViewedState::Changed);
 }
+
+/// 체크한 파일 하나의 hash를 계산하지 못해도 worktree는 열린다. 그 파일은 다시 바뀜으로 보인다.
+/// (chmod 000은 재현이 안 된다: 읽을 수 없는 untracked 파일은 바이너리로 보아 git 없이 hash를 낸다.
+/// 실패하는 required clean filter는 목록 계산은 통과하고 `git diff --no-index`만 exit 128로 실패한다)
+#[test]
+fn unhashable_checked_file_does_not_block_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = feat_repo();
+    repo.write("src/new.py", "n = 1\n");
+    let store = file_store(dir.path());
+    open_with(&repo, &store).set_viewed("src/new.py", true, None).unwrap();
+    drop(store);
+
+    repo.git(&["config", "filter.broken.clean", "false"]);
+    repo.git(&["config", "filter.broken.required", "true"]);
+    repo.write(".git/info/attributes", "src/new.py filter=broken\n");
+    let wt = Worktree::open_with(repo.path(), Some("main".into()), Gh::disabled(), file_store(dir.path()))
+        .expect("worktree should open");
+    assert_eq!(state(&wt, "src/new.py"), ViewedState::Changed);
+}

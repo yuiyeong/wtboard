@@ -121,7 +121,8 @@ struct State {
     merge_base: String,
     files: BTreeMap<String, ChangedFile>,
     /// 화면이 patch를 가져간 파일과 봤음 체크한 파일의 마지막 hash.
-    /// 불변식: `viewed`에 있고 `files`에도 있는 파일은 여기 현재 hash가 있다
+    /// 불변식: `viewed`에 있고 `files`에도 있는 파일은 여기 현재 hash가 있다.
+    /// 예외: hash를 계산하지 못한 파일은 빠진다 (다시 바뀜으로 보인다)
     hashes: HashMap<String, String>,
     /// 봤음 row를 읽은 브랜치. detached HEAD면 `""`
     branch_key: String,
@@ -189,7 +190,7 @@ impl Worktree {
         let branch_key = current_branch(&git).unwrap_or_default();
         let rows = load_rows(&viewed, &id, &branch_key);
         // 앱이 꺼진 사이 바뀐 체크 파일이 여기서 다시 바뀜으로 잡힌다
-        let hashes = viewed_hashes(&git, &mb, &rows, files.values())?;
+        let hashes = viewed_hashes(&git, &mb, &rows, files.values());
         Ok(Arc::new(Self {
             id,
             git,
@@ -376,7 +377,7 @@ impl Worktree {
         }
         let viewed = if same_branch { st.viewed.clone() } else { load_rows(&self.viewed, &self.id, &branch_key) };
         let files = self.list_all(&mb)?;
-        let hashes = viewed_hashes(&self.git, &mb, &viewed, files.values())?;
+        let hashes = viewed_hashes(&self.git, &mb, &viewed, files.values());
         *st = State { base, merge_base: mb, files, hashes, branch_key, viewed };
         Ok(Some(self.event(ChangeScope::Base, Vec::new())))
     }
@@ -398,7 +399,7 @@ impl Worktree {
         }
         // 바뀐 파일 중 체크한 파일은 hash를 다시 채운다 (불변식). 같은 event로 화면도 다시 가져간다
         let changed_files = changed.iter().filter_map(|p| fresh.get(p));
-        let rehashed = viewed_hashes(&self.git, &st.merge_base, &st.viewed, changed_files)?;
+        let rehashed = viewed_hashes(&self.git, &st.merge_base, &st.viewed, changed_files);
         for p in &changed {
             st.hashes.remove(p);
         }
@@ -526,17 +527,25 @@ fn load_rows(store: &ViewedStore, id: &str, branch_key: &str) -> HashMap<String,
     })
 }
 
-/// `files` 중 봤음 row가 있는 파일의 현재 hash. 결과는 호출한 쪽이 `hashes`에 넣는다
+/// `files` 중 봤음 row가 있는 파일의 현재 hash. 결과는 호출한 쪽이 `hashes`에 넣는다.
+/// hash를 계산하지 못한 파일은 빼고 계속한다. 파일 하나 때문에 worktree를 못 여는 것보다 낫고,
+/// hash가 없으면 다시 바뀜으로 보이므로 안전한 쪽이다
 fn viewed_hashes<'a>(
     git: &Git,
     merge_base: &str,
     rows: &HashMap<String, String>,
     files: impl IntoIterator<Item = &'a ChangedFile>,
-) -> Result<HashMap<String, String>, WorktreeError> {
+) -> HashMap<String, String> {
     files
         .into_iter()
         .filter(|f| rows.contains_key(&f.path))
-        .map(|f| Ok((f.path.clone(), file_patch(git, merge_base, f)?.hash)))
+        .filter_map(|f| match file_patch(git, merge_base, f) {
+            Ok(patch) => Some((f.path.clone(), patch.hash)),
+            Err(e) => {
+                eprintln!("[wtboard] {}: {}의 hash를 계산할 수 없음: {e}", git.cwd().display(), f.path);
+                None
+            }
+        })
         .collect()
 }
 
