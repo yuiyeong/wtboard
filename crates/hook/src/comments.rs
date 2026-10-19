@@ -17,7 +17,7 @@ const BUSY: Duration = Duration::from_secs(1);
 
 pub fn attach(input: &HookInput, out: &mut impl Write) -> HookResult {
     // `/compact` 같은 명령에 붙으면 반영되지 않은 채 전송됨이 된다
-    if input.prompt.as_deref().is_some_and(|p| p.starts_with('/')) {
+    if input.prompt.as_deref().is_some_and(is_slash_command) {
         return Ok(());
     }
     // config를 못 읽어도 켜진 것으로 본다
@@ -37,4 +37,11 @@ pub fn attach(input: &HookInput, out: &mut impl Write) -> HookResult {
         out.flush()
     })?;
     Ok(())
+}
+
+/// 첫 단어가 `/`로 시작하고 그 뒤에 `/`가 없으면 명령이다 (`/compact`, `/review 123`, `/plugin:cmd`).
+/// `/Users/jo/x.rs 고쳐 줘`처럼 경로로 시작하는 prompt는 명령이 아니다
+fn is_slash_command(prompt: &str) -> bool {
+    let first = prompt.split_whitespace().next().unwrap_or("");
+    first.strip_prefix('/').is_some_and(|rest| !rest.contains('/'))
 }

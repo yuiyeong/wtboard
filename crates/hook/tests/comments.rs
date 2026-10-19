@@ -126,12 +126,27 @@ fn slash_command_does_not_attach() {
     let wt = worktree_id(repo.path());
     seed_comment(data.path(), &wt, "a.rs", 1, "x");
 
-    assert_quiet_exit(&submit(data.path(), repo.path(), Some("/compact")));
+    for prompt in ["/compact", "/review 123", "/wtboard:cmd 인자", "/clear\n"] {
+        assert_quiet_exit(&submit(data.path(), repo.path(), Some(prompt)));
+    }
     assert!(all_unsent(data.path(), &wt));
 
     // prompt 필드가 없으면 첨부한다
     let json = stdout_json(&submit(data.path(), repo.path(), None));
     assert!(json["hookSpecificOutput"]["additionalContext"].as_str().is_some());
+}
+
+#[test]
+fn path_prompt_attaches() {
+    // `/`로 시작해도 첫 단어에 `/`가 더 있으면 명령이 아니라 경로다
+    let repo = TestRepo::new();
+    let data = tempfile::tempdir().unwrap();
+    let wt = worktree_id(repo.path());
+    seed_comment(data.path(), &wt, "a.rs", 1, "x");
+
+    let json = stdout_json(&submit(data.path(), repo.path(), Some("/Users/jo/x.rs 고쳐 줘")));
+    assert!(json["hookSpecificOutput"]["additionalContext"].as_str().is_some());
+    assert!(all_sent(data.path(), &wt));
 }
 
 #[test]
