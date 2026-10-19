@@ -46,15 +46,16 @@ fn copy_payload(store: &CommentStore, worktree: &str) -> Result<CopyPayload, Str
 }
 
 /// registry를 열 때 함께 열린다. registry를 기다린 뒤에는 항상 채워져 있다 (registry가 실패했으면 그 오류)
-fn with_store<T: Send + 'static>(
+async fn with_store<T: Send + 'static>(
     app: AppHandle,
     f: impl FnOnce(&CommentStore) -> Result<T, String> + Send + 'static,
-) -> impl std::future::Future<Output = Result<T, String>> {
+) -> Result<T, String> {
     blocking(move || {
         registry(&app)?;
         let store = app.state::<AppState>().inner().comments.get().ok_or("코멘트 저장소가 열리지 않았습니다")?;
         f(store)
     })
+    .await
 }
 
 #[tauri::command]

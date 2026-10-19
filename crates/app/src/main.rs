@@ -58,12 +58,10 @@ async fn list_repos(app: AppHandle) -> Result<ReposResponse, String> {
         let reg = registry(&app)?;
         let mut repos = reg.repos();
         let active = active_roots(&data_dir(), &reg.roots(), now_ms());
-        for w in repos.iter_mut().flat_map(|r| &mut r.worktrees) {
-            w.active_session = active.contains(Path::new(&w.id));
-        }
         // 코멘트 저장소는 registry와 함께 열린다. 못 읽으면 0으로 둔다
         let unsent = app.state::<AppState>().inner().comments.get().and_then(|s| s.unsent_counts().ok());
         for w in repos.iter_mut().flat_map(|r| &mut r.worktrees) {
+            w.active_session = active.contains(Path::new(&w.id));
             w.unsent_comments = unsent.as_ref().and_then(|u| u.get(&w.id)).copied().unwrap_or(0);
         }
         let auto_attach_comments =
