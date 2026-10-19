@@ -80,10 +80,15 @@ pub fn sessions_for(data_dir: &Path, worktree_root: &Path, now: u64) -> Vec<Sess
 /// `roots` 중 세션이 속한 worktree. `roots` 순서대로
 pub fn worktrees_of(dir: &SessionDir, roots: &[PathBuf]) -> Vec<PathBuf> {
     let events = dir.events();
-    // 경로마다 symlink를 한 번만 푼다 (root 수만큼 풀지 않게). project_dir은 폴더 자체가 symlink일 수 있다
+    // 어느 root 아래도 아닌 경로만 symlink를 푼다 (경로마다 한 번). project_dir은 폴더 자체가 symlink일 수 있다
     let files: BTreeSet<&Path> = file_paths(&events).collect();
-    let mut spellings: Vec<PathBuf> =
-        files.into_iter().flat_map(|p| std::iter::once(p.to_path_buf()).chain(real_path(p))).collect();
+    let mut spellings: Vec<PathBuf> = files
+        .into_iter()
+        .flat_map(|p| {
+            let real = if roots.iter().any(|r| p.starts_with(r)) { None } else { real_path(p) };
+            std::iter::once(p.to_path_buf()).chain(real)
+        })
+        .collect();
     if let Some(meta) = dir.read_meta() {
         spellings.push(canonical(&meta.project_dir));
         spellings.push(meta.project_dir);
@@ -137,17 +142,18 @@ fn is_active(meta: Option<&Meta>, last: u64, now: u64) -> bool {
 
 /// 파일 event(`Edit`, `Bash`)의 경로
 fn file_paths(events: &[Event]) -> impl Iterator<Item = &Path> {
-    events
-        .iter()
-        .filter(|e| matches!(e.kind, EventKind::Edit | EventKind::Bash))
-        .flat_map(|e| e.paths.iter().map(PathBuf::as_path))
+    events.iter().filter(|e| is_file_event(e)).flat_map(|e| e.paths.iter().map(PathBuf::as_path))
+}
+
+fn is_file_event(e: &Event) -> bool {
+    matches!(e.kind, EventKind::Edit | EventKind::Bash)
 }
 
 /// 파일 event 경로 중 `root` 아래인 것. event 순서대로, 중복 포함
 pub(crate) fn touched(events: &[Event], root: &Path) -> Vec<Touch> {
     events
         .iter()
-        .filter(|e| matches!(e.kind, EventKind::Edit | EventKind::Bash))
+        .filter(|e| is_file_event(e))
         .flat_map(|e| e.paths.iter().map(move |p| (e.turn.max(1), p)))
         .filter_map(|(turn, abs)| {
             let rel = rel_under(root, abs).filter(|r| !r.is_empty())?;

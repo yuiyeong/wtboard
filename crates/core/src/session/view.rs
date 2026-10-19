@@ -5,7 +5,7 @@
 //! - 마지막 응답: 그 파일의 이전 turn 스냅샷(없으면 원본) ↔ 대상 turn 스냅샷 (진행 중이면 현재 파일)
 //!
 //! 양쪽이 같으면 (되돌린 파일) 목록에서 뺀다.
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -169,11 +169,9 @@ fn items(dir: &SessionDir, view: SessionView, wt: &Worktree, only: Option<&str>)
             }
             Some((n, open)) => {
                 // 이전 turn 스냅샷은 그 turn에 이 파일을 건드렸을 때만 있다. 가장 최근 것부터 본다
-                let mut older: Vec<u32> =
+                let older: BTreeSet<u32> =
                     touches.iter().filter(|t| t.rel == rel && t.turn < n).map(|t| t.turn).collect();
-                older.sort_unstable_by(|a, b| b.cmp(a));
-                older.dedup();
-                let (before, uncertain) = match older.iter().find_map(|k| dir.turn_snapshot(*k, &touch.abs)) {
+                let (before, uncertain) = match older.iter().rev().find_map(|k| dir.turn_snapshot(*k, &touch.abs)) {
                     Some(s) => (Side::snapshot(s), false),
                     None => baseline_side(dir, &baselines, &touch.abs),
                 };
@@ -197,11 +195,12 @@ fn items(dir: &SessionDir, view: SessionView, wt: &Worktree, only: Option<&str>)
 /// 모르므로 없는 파일로 보고 불확실로 표시한다
 fn baseline_side(dir: &SessionDir, baselines: &HashMap<PathBuf, Baseline>, abs: &Path) -> (Side, bool) {
     let Some(b) = baselines.get(abs) else { return (Side::default(), true) };
+    let file = dir.baseline_file(abs);
     match (b.kind, b.size, &b.hash) {
         (BaselineKind::New, ..) => (Side::default(), false),
         (BaselineKind::TooLarge, Some(size), Some(hash)) => (Side::large(size, hash.clone()), false),
-        (BaselineKind::File | BaselineKind::Uncertain, ..) if dir.baseline_file(abs).is_file() => {
-            (Side::file(dir.baseline_file(abs)), b.kind == BaselineKind::Uncertain)
+        (BaselineKind::File | BaselineKind::Uncertain, ..) if file.is_file() => {
+            (Side::file(file), b.kind == BaselineKind::Uncertain)
         }
         _ => (Side::default(), true),
     }
