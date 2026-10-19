@@ -1,0 +1,5 @@
+{
+  "name": "wtboard",
+  "version": "0.1.0",
+  "description": "Claude Code 세션이 바꾼 파일을 wtboard에 기록한다"
+}
