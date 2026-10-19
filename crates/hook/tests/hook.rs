@@ -842,3 +842,126 @@ fn bash_many_files_and_large_original() {
     assert_eq!(b.hash.as_deref(), Some(blake3::hash(&big).to_hex().as_str()));
     assert_eq!(bash_events(&dir)[0].paths.len(), 6);
 }
+
+/// committer 시각이 오래전인 커밋(x.py)이 있는 `other` 브랜치. `diverged`면 main에도 새 커밋(a.py)을 더해 갈라 놓는다
+fn repo_with_other_branch(diverged: bool) -> TestRepo {
+    let repo = TestRepo::new();
+    repo.git(&["checkout", "-q", "-b", "other"]);
+    repo.write("x.py", "x = 1\n");
+    repo.git(&["add", "-A"]);
+    let out = std::process::Command::new("git")
+        .args(["commit", "-q", "-m", "x"])
+        .current_dir(repo.path())
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_COMMITTER_DATE", "2001-01-01T00:00:00Z")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    repo.git(&["checkout", "-q", "main"]);
+    if diverged {
+        repo.write("a.py", "a = 1\n");
+        repo.commit_all("a");
+    }
+    repo
+}
+
+/// Bash 안의 브랜치 전환은 그 Bash가 고친 것이 아니다. HEAD 사이 경로를 세션에 넣지 않는다
+#[test]
+fn bash_checkout_of_other_branch_records_nothing() {
+    let data = tempfile::tempdir().unwrap();
+    let repo = repo_with_other_branch(true);
+    bash_session(data.path(), &repo);
+
+    bash(data.path(), SID, repo.path(), || {
+        repo.git(&["checkout", "-q", "other"]);
+    });
+
+    let dir = session(data.path(), SID);
+    assert!(dir.baselines().is_empty(), "{:?}", dir.baselines());
+    assert!(bash_events(&dir).is_empty());
+}
+
+/// `git pull`·`merge --ff-only`로 들어온 남의 (Bash 전에 만든) 커밋도 넣지 않는다
+#[test]
+fn bash_fast_forward_of_older_commit_records_nothing() {
+    let data = tempfile::tempdir().unwrap();
+    let repo = repo_with_other_branch(false);
+    bash_session(data.path(), &repo);
+
+    bash(data.path(), SID, repo.path(), || {
+        repo.git(&["merge", "-q", "--ff-only", "other"]);
+    });
+
+    let dir = session(data.path(), SID);
+    assert!(dir.baselines().is_empty(), "{:?}", dir.baselines());
+    assert!(bash_events(&dir).is_empty());
+}
+
+/// `-uall`도 안쪽 레포·worktree는 `? inner/` 한 줄로 낸다. 파일이 아니므로 원본을 만들지 않는다
+/// (만들면 `baseline/.../inner`가 파일이 되어 그 안 파일의 원본을 못 남긴다)
+#[test]
+fn bash_nested_repo_is_not_a_file() {
+    let data = tempfile::tempdir().unwrap();
+    let repo = TestRepo::new();
+    let root = bash_session(data.path(), &repo);
+
+    bash(data.path(), SID, repo.path(), || {
+        repo.git(&["init", "-q", "inner"]);
+        repo.write("inner/a.py", "a = 1\n");
+    });
+
+    let dir = session(data.path(), SID);
+    assert!(dir.baselines().is_empty(), "{:?}", dir.baselines());
+    assert!(!dir.baseline_file(&root.join("inner")).exists());
+    assert!(bash_events(&dir).is_empty());
+
+    let a = root.join("inner/a.py");
+    let out = run_hook(data.path(), "pre-edit", &edit_input(SID, &a));
+    assert_quiet_exit(&out);
+    assert!(out.stderr.is_empty(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(dir.baselines()[&a].kind, BaselineKind::File);
+    assert_eq!(baseline_text(&dir, &a), "a = 1\n");
+}
+
+/// 상대 경로 `WTBOARD_CONFIG`면 data dir가 hook의 cwd (레포) 기준이 된다. 아무것도 쓰지 않고 오류 한 줄
+#[test]
+fn relative_data_dir_records_nothing() {
+    let repo = TestRepo::new();
+    let file = repo.path().join("a.py");
+    for data in ["rel", ""] {
+        let before = tree(repo.path());
+        for sub in ["session-start", "prompt-submit", "pre-edit", "post-edit", "pre-bash", "turn-end", "session-end"] {
+            let mut cmd = hook_command(Path::new(data), &[sub]);
+            cmd.current_dir(repo.path());
+            let out = run_with_stdin(cmd, edit_input(SID, &file).to_string().as_bytes());
+            assert_quiet_exit(&out);
+            assert!(!out.stderr.is_empty(), "{data:?} {sub}: 오류를 stderr에 남긴다");
+        }
+        assert_eq!(tree(repo.path()), before, "{data:?}");
+    }
+}
+
+/// turn 스냅샷을 못 찍어도 (turn 폴더를 못 만듦) turn 번호는 넘어간다. 오류는 stderr 한 줄
+#[test]
+fn snapshot_failure_still_advances_turn() {
+    let data = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    hook(data.path(), "session-start", SID, work.path(), "SessionStart");
+    prompt(data.path(), SID);
+    let dir = session(data.path(), SID);
+    fs::write(dir.root().join("turns"), "not a dir").unwrap();
+
+    for want in [2, 3] {
+        let input = with(base(SID, Path::new("/"), "UserPromptSubmit"), json!({ "prompt": "go" }));
+        let out = run_hook(data.path(), "prompt-submit", &input);
+        assert_quiet_exit(&out);
+        assert!(!out.stderr.is_empty());
+        let meta = dir.read_meta().unwrap();
+        assert_eq!((meta.turn, meta.turn_open), (want, true));
+    }
+    let out = run_hook(data.path(), "turn-end", &base(SID, work.path(), "Stop"));
+    assert_quiet_exit(&out);
+    assert!(!out.stderr.is_empty());
+    assert!(!dir.read_meta().unwrap().turn_open);
+}

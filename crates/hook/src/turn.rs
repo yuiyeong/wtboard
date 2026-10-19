@@ -23,29 +23,31 @@ pub fn session_start(dir: &SessionDir, input: &HookInput) -> HookResult {
 /// 열린 turn을 닫고 다음 turn을 연다. SessionStart를 놓친 세션 (plugin을 세션 중간에 켬)은 여기서 meta를 만든다
 pub fn prompt_submit(dir: &SessionDir, input: &HookInput) -> HookResult {
     let mut meta = dir.read_meta().unwrap_or_else(|| new_meta(input));
-    close_turn(dir, &mut meta)?;
+    // 스냅샷을 못 찍어도 turn은 넘긴다. 아니면 같은 turn에 계속 머문다. 오류는 끝에 알린다
+    let closed = close_turn(dir, &mut meta);
     meta.turn += 1;
     meta.turn_open = true;
     dir.write_meta(&meta)?;
     dir.append_event(&turn_event(meta.turn, EventKind::TurnStart))?;
-    Ok(())
+    closed
 }
 
 pub fn turn_end(dir: &SessionDir, _input: &HookInput) -> HookResult {
     let Some(mut meta) = dir.read_meta() else { return Ok(()) };
-    if meta.turn_open {
-        close_turn(dir, &mut meta)?;
-        dir.write_meta(&meta)?;
+    if !meta.turn_open {
+        return Ok(());
     }
-    Ok(())
+    let closed = close_turn(dir, &mut meta);
+    dir.write_meta(&meta)?;
+    closed
 }
 
 pub fn session_end(dir: &SessionDir, input: &HookInput) -> HookResult {
     let mut meta = dir.read_meta().unwrap_or_else(|| new_meta(input));
-    close_turn(dir, &mut meta)?;
+    let closed = close_turn(dir, &mut meta);
     meta.ended_at = Some(now_ms());
     dir.write_meta(&meta)?;
-    Ok(())
+    closed
 }
 
 /// `project_dir`은 `CLAUDE_PROJECT_DIR`, 없으면 `cwd`. `start_head`는 그 폴더의 HEAD (레포가 아니면 없음)
@@ -66,7 +68,8 @@ fn new_meta(input: &HookInput) -> Meta {
 }
 
 /// 열린 turn이면 그 turn이 건드린 경로를 `turns/<n>/`에 찍고 `turn_end` event를 쓴다.
-/// meta는 바꾸기만 하고 쓰지 않는다 (부른 쪽이 한 번에 쓴다)
+/// 스냅샷을 못 찍어도 turn은 닫고 그 오류를 돌려준다 (앱은 스냅샷 없는 turn을 현재 파일로 본다).
+/// meta는 바꾸기만 하고 쓰지 않는다 (부른 쪽이 한 번에 쓰고 오류는 그 뒤에 돌려준다)
 fn close_turn(dir: &SessionDir, meta: &mut Meta) -> HookResult {
     if !meta.turn_open {
         return Ok(());
@@ -80,10 +83,10 @@ fn close_turn(dir: &SessionDir, meta: &mut Meta) -> HookResult {
         .filter(|e| in_turn(e.turn) && matches!(e.kind, EventKind::Edit | EventKind::Bash))
         .flat_map(|e| e.paths)
         .collect();
-    dir.snapshot_turn(meta.turn, &paths.into_iter().collect::<Vec<_>>())?;
+    let snapshot = dir.snapshot_turn(meta.turn, &paths.into_iter().collect::<Vec<_>>());
     dir.append_event(&turn_event(meta.turn, EventKind::TurnEnd))?;
     meta.turn_open = false;
-    Ok(())
+    Ok(snapshot?)
 }
 
 fn turn_event(turn: u32, kind: EventKind) -> Event {

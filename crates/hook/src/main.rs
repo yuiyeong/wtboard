@@ -74,7 +74,12 @@ fn run(sub: &str) -> HookResult {
     let mut stdin = Vec::new();
     io::stdin().read_to_end(&mut stdin)?;
     let input: HookInput = serde_json::from_slice(&stdin)?;
-    let dir = SessionDir::open(&data_dir(), &input.session_id)
+    // 상대 경로 (`WTBOARD_CONFIG`가 상대 경로)면 hook의 cwd인 레포 안에 쓰게 된다
+    let data = data_dir();
+    if !data.is_absolute() {
+        return Err(format!("data dir가 절대 경로가 아님: {}", data.display()).into());
+    }
+    let dir = SessionDir::open(&data, &input.session_id)
         .ok_or_else(|| format!("잘못된 session_id: {:?}", input.session_id))?;
     handler(&dir, &input)
 }

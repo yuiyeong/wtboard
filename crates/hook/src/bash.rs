@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use wtboard_core::git::{Git, GitError};
@@ -16,6 +16,8 @@ use crate::{now_ms, HookInput, HookResult};
 struct StatusSnapshot {
     root: PathBuf,
     head: String,
+    /// pre-bash 시각 (Unix 초). 이보다 뒤에 만든 커밋만 이 Bash가 만든 것으로 본다
+    started: u64,
     entries: Entries,
 }
 
@@ -39,8 +41,10 @@ pub fn pre_bash(dir: &SessionDir, input: &HookInput) -> HookResult {
     };
     let Some((root, head)) = out.split_once('\n') else { return Ok(()) };
     let root = PathBuf::from(root);
+    // status보다 먼저 잰다. 커밋 시각은 초 단위라 내림한다
+    let started = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let entries = status(&root)?;
-    let snapshot = StatusSnapshot { root, head: head.to_string(), entries };
+    let snapshot = StatusSnapshot { root, head: head.to_string(), started, entries };
     dir.write_bash_snapshot(id, &serde_json::to_vec(&snapshot)?)?;
     Ok(())
 }
@@ -53,7 +57,7 @@ pub fn post_bash(dir: &SessionDir, input: &HookInput) -> HookResult {
     let before: StatusSnapshot = serde_json::from_slice(&bytes)?;
     let git = Git::new(&before.root);
     let after = status(&before.root)?;
-    let committed = committed_paths(&git, &before.head).unwrap_or_default();
+    let committed = committed_paths(&git, &before.head, before.started).unwrap_or_default();
     let meta = dir.read_meta();
     let start_head = meta.as_ref().and_then(|m| m.start_head.as_deref());
 
@@ -147,11 +151,26 @@ fn changed(
     out
 }
 
-/// Bash 중 HEAD가 바뀌었으면 두 커밋 사이에 바뀐 경로. 그대로면 빈 목록.
-/// 실패는 (Bash가 HEAD를 unborn으로 만듦 등) 부른 쪽이 빈 목록으로 본다. status 비교 결과는 그대로 쓴다
-fn committed_paths(git: &Git, pre_head: &str) -> Result<Vec<String>, GitError> {
+/// Bash가 커밋을 만들었으면 두 HEAD 사이에 바뀐 경로. 그대로면 빈 목록.
+/// 새 HEAD가 이전 HEAD의 자손이고 그 사이 커밋이 모두 Bash 뒤에 만들어졌을 때만 이 Bash의 커밋으로 본다.
+/// 브랜치 전환·pull·rebase·reset은 남의 변경까지 끌어오므로 status 비교만 쓴다
+/// (대가: Bash가 자기 커밋을 amend·rebase하면 그 파일을 놓칠 수 있다).
+/// 실패는 (자손이 아님, Bash가 HEAD를 unborn으로 만듦 등) 부른 쪽이 빈 목록으로 본다. status 비교 결과는 그대로 쓴다
+fn committed_paths(git: &Git, pre_head: &str, started: u64) -> Result<Vec<String>, GitError> {
     let head = git.run_str(&["rev-parse", "HEAD"])?;
     if head == pre_head {
+        return Ok(Vec::new());
+    }
+    // 자손이 아니면 exit 1
+    git.run(&["merge-base", "--is-ancestor", pre_head, &head])?;
+    let range = format!("{pre_head}..{head}");
+    // `--format`은 커밋마다 `commit <oid>` 줄을 앞에 붙인다
+    let times = git.run_str(&["rev-list", "--format=%ct", &range])?;
+    let ours = times
+        .lines()
+        .filter(|l| !l.starts_with("commit "))
+        .all(|t| t.parse::<u64>().is_ok_and(|t| t >= started));
+    if !ours {
         return Ok(Vec::new());
     }
     let out = git.run(&["diff", "--name-only", "-z", "--no-renames", pre_head, &head])?;
@@ -216,7 +235,7 @@ fn status(root: &Path) -> Result<Entries, GitError> {
 
 /// porcelain v2 `-z`의 `1`(변경)·`2`(rename)·`u`(충돌)·`?`(untracked) 줄을 (경로, XY)로.
 /// rename은 새 경로와 원래 경로(다음 NUL 조각) 둘 다 낸다. 같은 경로가 두 줄로 나올 수 있다
-/// (`git rm --cached`: `1 D.`와 `?`). UTF-8이 아닌 경로는 건너뛴다
+/// (`git rm --cached`: `1 D.`와 `?`). UTF-8이 아닌 경로와 파일이 아닌 경로는 건너뛴다
 fn parse_status(buf: &[u8]) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut records = buf.split(|b| *b == 0).filter(|r| !r.is_empty());
@@ -236,8 +255,13 @@ fn parse_status(buf: &[u8]) -> Vec<(String, String)> {
         if parts.len() != fields + 1 {
             continue;
         }
+        // 파일이 아닌 것: submodule (`<sub>`가 `S`로 시작), 안쪽 레포·worktree (`? inner/`)
+        let path = parts[fields];
+        if (fields > 1 && parts[2].starts_with('S')) || path.ends_with('/') {
+            continue;
+        }
         let xy = if fields == 1 { "??" } else { parts[1] };
-        out.push((parts[fields].to_string(), xy.to_string()));
+        out.push((path.to_string(), xy.to_string()));
         if let Some(original) = original.and_then(|o| std::str::from_utf8(o).ok()) {
             out.push((original.to_string(), xy.to_string()));
         }
@@ -268,6 +292,17 @@ u UU N... 100644 100644 100644 100644 ccc ddd eee conflict.py\0\
         ];
         let want: Vec<_> = want.iter().map(|(p, s)| (p.to_string(), s.to_string())).collect();
         assert_eq!(rows, want);
+    }
+
+    #[test]
+    fn skips_submodules_and_nested_repos() {
+        let z = "\
+1 .M S.M. 160000 160000 160000 aaa aaa sub\0\
+2 R. S... 160000 160000 160000 bbb bbb R100 sub2\0sub1\0\
+? inner/\0\
+? inner.txt\0";
+        let rows = parse_status(z.as_bytes());
+        assert_eq!(rows, [("inner.txt".to_string(), "??".to_string())]);
     }
 
     #[test]
