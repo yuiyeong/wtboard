@@ -205,7 +205,11 @@ fn items(
             targets.entry(t.rel.as_str()).or_insert(t);
         }
     }
-    let mut cx = Context { dir, root, touches: &touches, baselines: dir.baselines(), turns: HashMap::new() };
+    let mut turns_of: HashMap<&str, BTreeSet<u32>> = HashMap::new();
+    for t in &touches {
+        turns_of.entry(t.rel.as_str()).or_default().insert(t.turn);
+    }
+    let mut cx = Context { dir, root, turns_of, baselines: dir.baselines(), turns: HashMap::new() };
     targets
         .into_iter()
         .filter_map(|(rel, touch)| match cx.item(turn, touch) {
@@ -220,7 +224,8 @@ fn items(
 struct Context<'a> {
     dir: &'a SessionDir,
     root: &'a Path,
-    touches: &'a [Touch],
+    /// 파일마다 건드린 turn들
+    turns_of: HashMap<&'a str, BTreeSet<u32>>,
     baselines: HashMap<PathBuf, Baseline>,
     /// turn별 index는 한 번만 읽는다
     turns: HashMap<u32, TurnIndex>,
@@ -233,9 +238,8 @@ impl Context<'_> {
             None => self.baseline(&touch.abs),
             Some((n, _)) => {
                 // 이전 turn 스냅샷은 그 turn에 이 파일을 건드렸을 때만 있다. 가장 최근 것부터 본다
-                let older: BTreeSet<u32> =
-                    self.touches.iter().filter(|t| t.rel == touch.rel && t.turn < n).map(|t| t.turn).collect();
-                match older.iter().rev().find_map(|k| self.snapshot(*k, &touch.abs)) {
+                let older: Vec<u32> = self.turns_of[touch.rel.as_str()].range(..n).rev().copied().collect();
+                match older.into_iter().find_map(|k| self.snapshot(k, &touch.abs)) {
                     Some(s) => (Side::snapshot(s), false),
                     None => self.baseline(&touch.abs),
                 }
