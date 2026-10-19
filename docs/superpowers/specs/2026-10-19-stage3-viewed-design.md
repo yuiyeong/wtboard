@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS viewed (
 - **열 때**: 현재 브랜치의 row를 읽고, 목록에 있는 row 파일의 hash를 계산한다. 앱이 꺼진 사이 바뀐 파일이 여기서 잡힌다.
 - **`refresh_list`**: 바뀐 경로의 hash를 지운 뒤, 그중 row가 있는 파일은 다시 계산한다.
 - **`refresh_base`**: hash를 모두 지운 뒤 row 파일을 다시 계산한다. 브랜치가 바뀌었으면 새 브랜치의 row를 읽는다.
-- **`refresh_paths`**: 이미 hash를 다시 계산하므로 추가 작업이 없다.
+- **`refresh_paths`**: 바뀐 파일의 hash를 지우지 않고, row가 있는 파일은 새로 계산한 hash로 바꿔 둔다. 지우면 체크한 내용으로 되돌아와도 `changed`에 머문다.
 
 hash 계산은 state 교체와 같은 규칙을 따른다: 계산을 모두 끝낸 뒤 state를 바꾼다.
 
@@ -70,9 +70,9 @@ hash 계산은 state 교체와 같은 규칙을 따른다: 계산을 모두 끝�
 
 - `files()`가 `FileEntry { ...ChangedFile, viewed: ViewedState }`를 돌려준다. `ChangedFile`에는 넣지 않는다 (`refresh_list`가 `ChangedFile` 비교로 바뀐 파일을 찾는다).
 - `set_viewed(path, viewed, hash: Option<String>)`:
-  - `viewed = true`: `hash`가 있으면 그것을, 없으면 지금 계산한 hash를 저장한다. 현재 hash도 `hashes`에 넣는다. 화면이 보낸 hash가 그사이 바뀐 diff의 것이면 바로 `changed`로 보인다. 사용자가 본 것을 기록하는 것이므로 의도한 동작이다.
+  - `viewed = true`: 저장할 hash는 화면이 보낸 `hash` → `hashes`에 있는 값 → 지금 계산한 hash 순으로 정한다. `hashes`에 값이 없을 때만 지금 계산한 hash를 넣는다. `hashes`는 "화면이 알고 있는 hash"라서, 여기에 화면이 모르는 새 hash를 넣으면 처리 전인 FS event가 변화 없음으로 판정되어 사라지고 화면이 옛 diff에 멈춘다. 화면이 보낸 hash가 그사이 바뀐 diff의 것이면 FS event 처리 뒤 `changed`로 보인다. 사용자가 본 것을 기록하는 것이므로 의도한 동작이다.
   - `viewed = false`: row를 지운다.
-  - 목록에 없는 파일이면 `UnknownFile`.
+  - 목록에 없는 파일을 체크하면 `UnknownFile`. 해제는 목록에 없어도 row를 지우고 성공한다 (클릭 사이에 파일이 사라질 수 있다).
 - `WorktreeSummary.unviewed_files`: 변경 파일 중 `viewed`가 아닌 수 (`none` + `changed`). 접힌 파일도 센다.
 
 ### 알려진 한계
