@@ -4,6 +4,7 @@ import type { View } from '../api';
 import {
   anchorOf,
   byPath,
+  copyUnsent,
   firstLine,
   nextDraft,
   placeComments,
@@ -232,5 +233,25 @@ describe('nextDraft', () => {
   it('쓰던 글이 있으면 버리지 않고 그대로 둔다', () => {
     const typing: Draft = { anchor: a, body: '고쳐 주세요', view: 'branch' };
     expect(nextDraft(typing, b, 'turn')).toBe(typing);
+  });
+});
+
+describe('copyUnsent (마크다운으로 복사)', () => {
+  const run = async (ids: number[]) => {
+    const calls: string[] = [];
+    const n = await copyUnsent(
+      async () => ({ markdown: ids.length ? '# 코멘트' : '', ids }),
+      async (text) => void calls.push(`write:${text}`),
+      async (marked) => void calls.push(`mark:${marked.join(',')}`),
+    );
+    return { n, calls };
+  };
+
+  it('clipboard에 쓴 뒤에 전송됨으로 표시하고 복사한 수를 돌려준다', async () => {
+    expect(await run([1, 2])).toEqual({ n: 2, calls: ['write:# 코멘트', 'mark:1,2'] });
+  });
+
+  it('그 사이 hook이 보내서 미전송이 없으면 clipboard를 비우지 않고 아무것도 표시하지 않는다', async () => {
+    expect(await run([])).toEqual({ n: 0, calls: [] });
   });
 });

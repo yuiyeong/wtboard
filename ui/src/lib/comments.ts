@@ -1,5 +1,5 @@
 import { getChangeKey, type ChangeData } from 'react-diff-view';
-import type { Comment, Side, View } from '../api';
+import type { Comment, CopiedComments, Side, View } from '../api';
 import { formatHHMM } from './time';
 
 export const commentsKey = (worktreeId: string) => ['comments', worktreeId] as const;
@@ -138,4 +138,20 @@ export function byPath(comments: Comment[]): Map<string, Comment[]> {
 /** 목록에 보일 body 한 줄: 내용이 있는 첫 줄 */
 export function firstLine(body: string): string {
   return body.split('\n').find((line) => line.trim() !== '')?.trim() ?? '';
+}
+
+/**
+ * 미전송 코멘트를 markdown으로 clipboard에 쓴 뒤에만 전송됨(복사)으로 표시하고, 복사한 수를 돌려준다.
+ * 목록을 연 뒤에 hook이 보내서 미전송이 없으면 clipboard를 빈 글로 덮지 않고 아무것도 하지 않는다
+ */
+export async function copyUnsent(
+  load: () => Promise<CopiedComments>,
+  write: (markdown: string) => Promise<void>,
+  mark: (ids: number[]) => Promise<unknown>,
+): Promise<number> {
+  const { markdown, ids } = await load();
+  if (ids.length === 0) return 0;
+  await write(markdown);
+  await mark(ids);
+  return ids.length;
 }
