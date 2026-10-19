@@ -7,6 +7,7 @@ use wtboard_core::gh::Gh;
 use wtboard_core::registry::{EntryError, Registry};
 use wtboard_core::repo::{RepoSummary, Sink};
 use wtboard_core::store::config::Config;
+use wtboard_core::store::data_dir;
 use wtboard_core::store::viewed::ViewedStore;
 use wtboard_core::worktree::{FileEntry, Worktree, WorktreeChanged};
 
@@ -93,8 +94,8 @@ fn open_registry(handle: &AppHandle) -> Result<Registry, String> {
             let _ = updated.emit("worktrees-updated", ());
         }),
     };
-    // 봤음 상태는 config 파일 옆에 둔다. 열 수 없으면 이번 실행만 메모리에 둔다
-    let state_path = path.with_file_name("state.sqlite");
+    // 봤음 상태는 data dir(config 파일이 있는 폴더)에 둔다. 열 수 없으면 이번 실행만 메모리에 둔다
+    let state_path = data_dir().join("state.sqlite");
     let (viewed, warning) = match ViewedStore::open(&state_path) {
         Ok(store) => (store, None),
         Err(e) => (

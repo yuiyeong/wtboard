@@ -18,6 +18,8 @@ pub struct Config {
     pub repos: Vec<RepoConfig>,
     #[serde(default)]
     pub watch: WatchConfig,
+    #[serde(default)]
+    pub sessions: SessionsConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -44,6 +46,19 @@ impl WatchConfig {
 impl Default for WatchConfig {
     fn default() -> Self {
         Self { fallback_poll_secs: 30 }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct SessionsConfig {
+    /// 마지막 활동이 이보다 오래된 세션 기록은 앱 시작 때 지운다
+    pub keep_days: u64,
+}
+
+impl Default for SessionsConfig {
+    fn default() -> Self {
+        Self { keep_days: 7 }
     }
 }
 
