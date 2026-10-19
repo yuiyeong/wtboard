@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { listFiles, type RepoSummary, type WorktreeSummary } from '../api';
+import { listFiles, listSessions, type RepoSummary, type View, type WorktreeSummary } from '../api';
 import { worktreeLabel } from '../lib/selection';
-import { filesKey } from '../lib/sessions';
+import { effectiveView, filesKey, pickSession } from '../lib/sessions';
 import { buildTree, flattenFiles, splitCollapsed, type TreeNode } from '../lib/tree';
 import { viewedProgress } from '../lib/viewed';
 import { useUiStore } from '../store';
@@ -10,9 +10,16 @@ import { useSetViewed } from '../useSetViewed';
 import { FileDiff } from './FileDiff';
 import { FileTree } from './FileTree';
 import { FsmonitorBanner } from './FsmonitorBanner';
+import { ViewTabs } from './ViewTabs';
 
 /** 생성·lock 파일을 모아 두는 가짜 디렉터리. 실제 경로와 겹치지 않게 NUL로 시작한다 */
 const COLLAPSED_DIR = '\0collapsed';
+
+const EMPTY_TEXT: Record<View, string> = {
+  branch: 'base 대비 변경 사항이 없습니다.',
+  session: '이 세션이 바꾼 파일이 없습니다.',
+  turn: '이 응답이 바꾼 파일이 없습니다.',
+};
 
 /** 접힌 묶음 안의 폴더가 위쪽 같은 이름 폴더와 접기 상태를 공유하지 않게 path를 구분한다 */
 function underCollapsedDir(nodes: TreeNode[]): TreeNode[] {
@@ -24,9 +31,17 @@ function underCollapsedDir(nodes: TreeNode[]): TreeNode[] {
 export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: WorktreeSummary }) {
   const viewType = useUiStore((s) => s.viewType);
   const setViewType = useUiStore((s) => s.setViewType);
+  const chosenView = useUiStore((s) => s.views[worktree.id] ?? 'branch');
+  const setView = useUiStore((s) => s.setView);
+  const rememberedSession = useUiStore((s) => s.sessions[worktree.id]);
+  const selectSession = useUiStore((s) => s.selectSession);
+  const sessions = useQuery({ queryKey: ['sessions', worktree.id], queryFn: () => listSessions(worktree.id) });
+  const session = pickSession(sessions.data ?? [], rememberedSession);
+  const view = effectiveView(chosenView, session);
+  const sessionId = view === 'branch' || !session ? null : session.id;
   const files = useQuery({
-    queryKey: filesKey(worktree.id, 'branch', null),
-    queryFn: () => listFiles(worktree.id, 'branch', null),
+    queryKey: filesKey(worktree.id, view, sessionId),
+    queryFn: () => listFiles(worktree.id, view, sessionId),
   });
   const { onSetViewed, error: viewedError } = useSetViewed(worktree.id);
   const progress = useMemo(() => viewedProgress(files.data ?? []), [files.data]);
@@ -56,9 +71,21 @@ export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: 
             {viewedError}
           </span>
         )}
-        <span className={`tabular-nums ${allViewed ? 'text-green-600' : 'text-gray-500'}`}>
-          확인 {progress.viewed}/{progress.total}
-        </span>
+        {view === 'branch' && (
+          <span className={`tabular-nums ${allViewed ? 'text-green-600' : 'text-gray-500'}`}>
+            확인 {progress.viewed}/{progress.total}
+          </span>
+        )}
+      </header>
+      <div className="flex items-center gap-3 border-b border-gray-200 px-4 py-1.5 text-sm">
+        <ViewTabs
+          view={view}
+          sessions={sessions.data ?? []}
+          session={session}
+          onView={(v) => setView(worktree.id, v)}
+          onSession={(id) => selectSession(worktree.id, id)}
+        />
+        <span className="flex-1" />
         <div className="flex overflow-hidden rounded border border-gray-300">
           {(['split', 'unified'] as const).map((v) => (
             <button
@@ -70,7 +97,7 @@ export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: 
             </button>
           ))}
         </div>
-      </header>
+      </div>
       <FsmonitorBanner repoId={repo.id} worktree={worktree} />
       <div className="flex min-h-0 flex-1">
         <aside className="w-80 shrink-0 overflow-y-auto border-r border-gray-200">
@@ -81,9 +108,18 @@ export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: 
         <main className="flex-1 overflow-y-auto px-4 pb-4">
           <div className="h-4" />
           {files.error && <p className="text-red-600">{String(files.error)}</p>}
-          {files.data?.length === 0 && <p className="text-gray-500">base 대비 변경 사항이 없습니다.</p>}
+          {files.data?.length === 0 && <p className="text-gray-500">{EMPTY_TEXT[view]}</p>}
+          {/* view마다 펼침 상태를 새로 시작한다 */}
           {ordered.map((f) => (
-            <FileDiff key={f.path} worktreeId={worktree.id} file={f} viewType={viewType} onSetViewed={onSetViewed} />
+            <FileDiff
+              key={`${view}:${f.path}`}
+              worktreeId={worktree.id}
+              file={f}
+              view={view}
+              sessionId={sessionId}
+              viewType={viewType}
+              onSetViewed={onSetViewed}
+            />
           ))}
         </main>
       </div>

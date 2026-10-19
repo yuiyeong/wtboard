@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionSummary } from '../api';
-import { effectiveView, filesKey, patchKey, pickSession, turnLabel } from './sessions';
+import { effectiveView, filesKey, patchKey, pickSession, sessionLabel, turnLabel } from './sessions';
 
 const session = (id: string, overrides: Partial<SessionSummary> = {}): SessionSummary => ({
   id,
@@ -64,5 +64,17 @@ describe('turnLabel', () => {
 
   it('진행 중이면 표시를 붙인다', () => {
     expect(turnLabel(session('s', { turn: 3, turnOpen: true }))).toBe('#3 진행 중');
+  });
+});
+
+describe('sessionLabel', () => {
+  const at = new Date(2026, 9, 19, 9, 5).getTime(); // 로컬 시각
+
+  it('시작 시각 HH:MM', () => {
+    expect(sessionLabel(session('s', { startedAt: at }))).toBe('09:05 시작');
+  });
+
+  it('활성이면 ●를 붙인다', () => {
+    expect(sessionLabel(session('s', { startedAt: at, active: true }))).toBe('09:05 시작 ●');
   });
 });

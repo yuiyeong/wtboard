@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Diff, Hunk, parseDiff } from 'react-diff-view';
-import { getPatch, type ChangedFile, type PatchBody } from '../api';
+import { getPatch, type ChangedFile, type PatchBody, type View } from '../api';
 import { fileAnchorId } from '../lib/anchor';
 import { tokenizeHunks } from '../lib/highlight';
 import { languageForPath } from '../lib/language';
@@ -14,13 +14,16 @@ import { LineCounts } from './FileTree';
 interface Props {
   worktreeId: string;
   file: ChangedFile;
+  view: View;
+  /** branch view에서 null */
+  sessionId: string | null;
   viewType: ViewType;
   /** 참조가 안정적이어야 memo가 유지된다 */
   onSetViewed: (file: ChangedFile, viewed: boolean, hash: string | null) => void;
 }
 
 // 레포 목록이 갱신될 때마다(파일 event마다) 화면 전체가 다시 그려지므로, 바뀐 파일만 다시 그린다
-export const FileDiff = memo(function FileDiff({ worktreeId, file, viewType, onSetViewed }: Props) {
+export const FileDiff = memo(function FileDiff({ worktreeId, file, view, sessionId, viewType, onSetViewed }: Props) {
   const [ref, inView] = useInView<HTMLElement>();
   // 생성 파일과 본 파일은 접힌 채로 시작한다. 접혀 있으면 patch를 계산하지 않는다
   const [open, setOpen] = useState(() => initiallyOpen(file));
@@ -32,8 +35,8 @@ export const FileDiff = memo(function FileDiff({ worktreeId, file, viewType, onS
     setOpen((open) => nextOpen(prev, file.viewed, open));
   }, [file.viewed]);
   const patch = useQuery({
-    queryKey: patchKey(worktreeId, file.path, 'branch', null),
-    queryFn: () => getPatch(worktreeId, 'branch', file.path, null),
+    queryKey: patchKey(worktreeId, file.path, view, sessionId),
+    queryFn: () => getPatch(worktreeId, view, file.path, sessionId),
     enabled: inView && open, // 화면에 보이고 펼쳐져 있을 때만 계산
   });
 
@@ -48,17 +51,27 @@ export const FileDiff = memo(function FileDiff({ worktreeId, file, viewType, onS
         {file.viewed === 'changed' && (
           <span className="rounded bg-amber-100 px-1.5 text-xs text-amber-700">다시 바뀜</span>
         )}
+        {file.uncertain && (
+          <span
+            className="text-xs text-gray-400"
+            title="Bash가 바꾼 파일이라 세션 전 내용을 모릅니다. 세션 시작 commit과 비교합니다"
+          >
+            원본 불확실
+          </span>
+        )}
         {file.collapsed && !open && <span className="text-xs text-gray-400">생성 파일</span>}
         <LineCounts file={file} />
-        {/* checkbox 클릭이 header의 접기 toggle로 번지지 않게 막는다 */}
-        <label className="flex items-center gap-1 text-xs text-gray-600" onClick={(e) => e.stopPropagation()}>
-          <input
-            type="checkbox"
-            checked={file.viewed === 'viewed'}
-            onChange={(e) => onSetViewed(file, e.target.checked, patch.data?.hash ?? null)}
-          />
-          봤음
-        </label>
+        {/* 봤음은 branch view에만 있다. checkbox 클릭이 header의 접기 toggle로 번지지 않게 막는다 */}
+        {view === 'branch' && (
+          <label className="flex items-center gap-1 text-xs text-gray-600" onClick={(e) => e.stopPropagation()}>
+            <input
+              type="checkbox"
+              checked={file.viewed === 'viewed'}
+              onChange={(e) => onSetViewed(file, e.target.checked, patch.data?.hash ?? null)}
+            />
+            봤음
+          </label>
+        )}
       </header>
       {open &&
         (patch.error ? (

@@ -20,3 +20,10 @@ export const patchKey = (worktreeId: string, path: string, view: View, sessionId
 export function turnLabel(s: SessionSummary): string {
   return `#${s.turn}${s.turnOpen ? ' 진행 중' : ''}`;
 }
+
+/** 세션 select의 항목. `14:02 시작`, 활성이면 `14:02 시작 ●` */
+export function sessionLabel(s: SessionSummary): string {
+  const d = new Date(s.startedAt);
+  const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${hhmm} 시작${s.active ? ' ●' : ''}`;
+}

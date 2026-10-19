@@ -37,6 +37,11 @@ export function Sidebar({ repos, errors, selectedId, onSelect }: Props) {
                   >
                     <span className="flex w-full items-center gap-2">
                       {w.error && <span className="text-amber-600">⚠</span>}
+                      {w.activeSession && (
+                        <span className="text-[10px] text-green-600" title="Claude Code 세션 진행 중">
+                          ●
+                        </span>
+                      )}
                       <span className="flex-1 truncate font-mono text-xs">{worktreeLabel(w)}</span>
                       {!w.error && (
                         <span
