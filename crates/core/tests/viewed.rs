@@ -311,3 +311,36 @@ fn entry_json_is_flat_with_viewed_state() {
         .collect();
     assert_eq!(names, ["none", "viewed", "changed"]);
 }
+
+/// 사라진 폴더가 같은 묶음에 있어 목록 전체를 다시 계산해도, 체크한 파일의 +- 그대로인 수정을 hash로 잡는다
+#[test]
+fn deleted_folder_in_batch_still_catches_checked_edit() {
+    let repo = feat_repo();
+    repo.write("src/a.py", "a = 2\n");
+    repo.write("tmp/x.txt", "x\n");
+    let wt = open(&repo);
+    wt.set_viewed("src/a.py", true, None).unwrap();
+    repo.write("src/a.py", "a = 3\n"); // +1/-1, status M 그대로
+    repo.remove("tmp");
+    let targets = [Target::File("tmp".into()), Target::File("tmp/x.txt".into()), Target::File("src/a.py".into())];
+    let ev = wt.handle(&targets).unwrap().expect("should emit");
+    assert!(ev.changed_paths.contains(&"tmp/x.txt".to_string()), "{ev:?}");
+    assert!(ev.changed_paths.contains(&"src/a.py".to_string()), "{ev:?}");
+    assert_eq!(state(&wt, "src/a.py"), ViewedState::Changed);
+}
+
+/// 새로 생긴 폴더가 같은 묶음에 있어도 마찬가지다
+#[test]
+fn new_folder_in_batch_still_catches_checked_edit() {
+    let repo = feat_repo();
+    repo.write("src/a.py", "a = 2\n");
+    let wt = open(&repo);
+    wt.set_viewed("src/a.py", true, None).unwrap();
+    repo.write("src/a.py", "a = 3\n"); // +1/-1, status M 그대로
+    repo.write("newdir/y.txt", "y\n");
+    let targets = [Target::File("newdir".into()), Target::File("src/a.py".into())];
+    let ev = wt.handle(&targets).unwrap().expect("should emit");
+    assert!(ev.changed_paths.contains(&"newdir/y.txt".to_string()), "{ev:?}");
+    assert!(ev.changed_paths.contains(&"src/a.py".to_string()), "{ev:?}");
+    assert_eq!(state(&wt, "src/a.py"), ViewedState::Changed);
+}

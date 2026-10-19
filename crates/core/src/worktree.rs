@@ -409,24 +409,49 @@ impl Worktree {
 
     fn refresh_paths(&self, paths: &[String]) -> Result<Option<WorktreeChanged>, WorktreeError> {
         let mut st = self.state.lock().unwrap();
-        // 폴더 경로 event (rm -rf로 사라진 폴더)
+        // 폴더 경로 event: rm -rf로 사라진 폴더는 그 아래 파일이 목록에 있고,
+        // 새로 생긴 폴더는 pathspec이 그 아래 파일들을 돌려준다
         let has_children = paths.iter().any(|p| {
             let prefix = format!("{p}/");
             st.files.keys().any(|k| k.starts_with(&prefix))
         });
-        if has_children {
+        let fresh = if has_children {
+            None
+        } else {
+            let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+            Some(compute_list(&self.git, self.profile, &st.merge_base, &refs)?.0)
+                .filter(|fresh| fresh.keys().all(|k| paths.contains(k)))
+        };
+        let Some(fresh) = fresh else {
             drop(st);
-            return self.refresh_list();
-        }
+            return self.refresh_folders(paths);
+        };
+        let changed = self.apply_paths(&mut st, paths, &fresh)?;
+        Ok((!changed.is_empty()).then(|| self.event(ChangeScope::File, changed)))
+    }
 
-        let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
-        let fresh = compute_list(&self.git, self.profile, &st.merge_base, &refs)?.0;
-        // 폴더 경로 event (새로 생긴 폴더): pathspec이 그 아래 파일들을 돌려준다
-        if fresh.keys().any(|k| !paths.contains(k)) {
-            drop(st);
-            return self.refresh_list();
-        }
+    /// 폴더 경로가 섞인 묶음: 목록 전체를 다시 계산한다. 목록 재계산은 status/+- 만 비교하므로,
+    /// 묶음의 파일 중 화면이 hash를 아는 파일은 hash 비교를 따로 한다 (+- 그대로인 수정을 놓치지 않게)
+    fn refresh_folders(&self, paths: &[String]) -> Result<Option<WorktreeChanged>, WorktreeError> {
+        let listed = self.refresh_list()?;
+        let mut st = self.state.lock().unwrap();
+        let known: Vec<String> = paths.iter().filter(|p| st.hashes.contains_key(*p)).cloned().collect();
+        // 목록은 방금 다시 계산했으므로 지금 목록이 곧 새 목록이다
+        let current: BTreeMap<String, ChangedFile> =
+            known.iter().filter_map(|p| st.files.get(p)).map(|f| (f.path.clone(), f.clone())).collect();
+        let changed = self.apply_paths(&mut st, &known, &current)?;
+        let rehashed = (!changed.is_empty()).then(|| self.event(ChangeScope::File, changed));
+        Ok(merge(listed.into_iter().chain(rehashed)))
+    }
 
+    /// `paths`의 새 목록 항목 `fresh`를 state에 반영하고 바뀐 경로를 돌려준다.
+    /// 목록 항목이 그대로여도 화면이 hash를 아는 파일은 hash를 비교한다
+    fn apply_paths(
+        &self,
+        st: &mut State,
+        paths: &[String],
+        fresh: &BTreeMap<String, ChangedFile>,
+    ) -> Result<Vec<String>, WorktreeError> {
         // 계산을 모두 끝낸 뒤에 state를 바꾼다. 도중에 git이 실패해도 state와 화면이 어긋나지 않는다.
         let mut updates = Vec::new();
         for p in paths {
@@ -460,7 +485,7 @@ impl Worktree {
             }
             changed.push(p);
         }
-        Ok((!changed.is_empty()).then(|| self.event(ChangeScope::File, changed)))
+        Ok(changed)
     }
 
     /// 전체 목록을 다시 계산하고 걸린 시간을 기록한다 (fsmonitor 안내용)
