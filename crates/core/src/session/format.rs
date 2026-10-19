@@ -299,10 +299,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(format!(".{}.tmp", std::process::id()));
     let tmp = PathBuf::from(tmp);
-    let written = private_file()
-        .create(true)
-        .truncate(true)
-        .open(&tmp)
+    let written = create_private(&tmp)
         .and_then(|mut f| f.write_all(bytes))
         .and_then(|()| fs::rename(&tmp, path));
     if written.is_err() {
@@ -377,8 +374,7 @@ fn snapshot_file(path: &Path, dest: &Path) -> io::Result<Option<TurnState>> {
     if let Some(parent) = dest.parent() {
         create_private_dir(parent)?;
     }
-    let mut out = private_file().create(true).truncate(true).open(dest)?;
-    io::copy(&mut src, &mut out)?;
+    io::copy(&mut src, &mut create_private(dest)?)?;
     Ok(None)
 }
 
@@ -392,6 +388,11 @@ fn private_file() -> OpenOptions {
     let mut opts = OpenOptions::new();
     opts.write(true).mode(FILE_MODE);
     opts
+}
+
+/// 0600으로 만들거나 비우고 연다
+fn create_private(path: &Path) -> io::Result<File> {
+    private_file().create(true).truncate(true).open(path)
 }
 
 /// 읽은 바이트 수와 blake3 hash (hex)
