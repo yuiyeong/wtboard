@@ -48,7 +48,7 @@ export function placeComments(comments: Comment[], changes: ChangeData[], view: 
   const byChangeKey = new Map<string, Comment[]>();
   const outdated: Comment[] = [];
   for (const c of comments) {
-    const change = c.side === 'old' && c.view !== view ? undefined : bySideLine.get(`${c.side}:${c.line}`);
+    const change = placeable(c.side, c.view, view) ? bySideLine.get(`${c.side}:${c.line}`) : undefined;
     if (!change || snippetOf(change.content) !== c.snippet) {
       outdated.push(c);
       continue;
@@ -60,6 +60,9 @@ export function placeComments(comments: Comment[], changes: ChangeData[], view: 
   }
   return { byChangeKey, outdated };
 }
+
+/** `old` side는 view마다 before가 다르므로 단(연) view와 지금 view가 같을 때만 줄에 맞춘다 */
+const placeable = (side: Side, madeIn: View, view: View) => side === 'new' || madeIn === view;
 
 /** 코멘트 위치 맞추기에 쓰는 `side:line` (anchorOf와 같은 규칙: 삭제 줄은 옛 번호, 나머지는 새 번호) */
 function sideLineOf(change: ChangeData): string {
@@ -85,7 +88,7 @@ export interface Draft {
  */
 export function placeDraft(draft: Draft, changes: ChangeData[], view: View): string | null {
   const { anchor } = draft;
-  if (anchor.side === 'old' && draft.view !== view) return null;
+  if (!placeable(anchor.side, draft.view, view)) return null;
   const target = `${anchor.side}:${anchor.line}`;
   const change = changes.find((c) => sideLineOf(c) === target);
   return change && snippetOf(change.content) === anchor.snippet ? getChangeKey(change) : null;

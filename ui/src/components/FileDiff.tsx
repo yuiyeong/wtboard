@@ -66,7 +66,7 @@ export const FileDiff = memo(function FileDiff({
   // 쓰던 글은 FileDiff 밖(store)에 있어서 patch·세션·view·worktree가 바뀌어 다시 mount되어도 남는다
   const dkey = draftKey(worktreeId, file.path);
   const draft = useDraftStore((s) => s.drafts[dkey]);
-  const writing = useDraftStore((s) => isWriting(s, dkey, commentProps.comments.map((c) => c.id)));
+  const writing = useDraftStore((s) => isWriting(s, dkey, commentProps.comments));
 
   return (
     <section ref={ref} id={fileAnchorId(file.path)} className="mb-4 rounded border border-gray-200">

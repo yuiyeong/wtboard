@@ -91,7 +91,7 @@ describe('isWriting (접힌 파일 header의 `작성 중`)', () => {
     expect(isWriting(read(), key, [])).toBe(true);
     closeDraft(key);
     startEdit(3, '수정');
-    expect(isWriting(read(), key, [1, 2])).toBe(false); // 다른 파일의 코멘트
-    expect(isWriting(read(), key, [3])).toBe(true);
+    expect(isWriting(read(), key, [{ id: 1 }, { id: 2 }])).toBe(false); // 다른 파일의 코멘트
+    expect(isWriting(read(), key, [{ id: 3 }])).toBe(true);
   });
 });

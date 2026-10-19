@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { View } from './api';
+import type { Comment, View } from './api';
 import { nextDraft, type Anchor, type Draft } from './lib/comments';
 
 /**
@@ -61,7 +61,7 @@ export function setEdit(id: number, body: string | null) {
 }
 
 /** 파일을 접으면 보이지 않는 쓰던 글이 있는지 (내용이 있는 새 입력, 또는 이 파일 코멘트의 수정) */
-export function isWriting(state: DraftState, key: string, commentIds: number[]): boolean {
+export function isWriting(state: DraftState, key: string, comments: Pick<Comment, 'id'>[]): boolean {
   const draft = state.drafts[key];
-  return (draft !== undefined && draft.body.trim() !== '') || commentIds.some((id) => id in state.edits);
+  return (draft !== undefined && draft.body.trim() !== '') || comments.some((c) => c.id in state.edits);
 }
