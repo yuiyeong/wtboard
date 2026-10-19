@@ -70,6 +70,9 @@ fn manifests_match_marketplace_entry() {
     assert_eq!(market["name"], "wtboard-local");
     assert_eq!(market["plugins"][0]["name"], plugin["name"]);
     assert_eq!(market["plugins"][0]["source"], "./wtboard");
+    // plugin 목록에 보이는 메타데이터
+    assert_eq!(plugin["author"]["name"], "wtboard");
+    assert!(market["description"].is_string());
 }
 
 #[test]

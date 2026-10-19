@@ -1,6 +1,7 @@
 {
   "name": "wtboard-local",
   "owner": { "name": "wtboard" },
+  "description": "wtboard 로컬 plugin marketplace",
   "plugins": [
     { "name": "wtboard", "source": "./wtboard", "description": "wtboard 세션 기록 hook" }
   ]
