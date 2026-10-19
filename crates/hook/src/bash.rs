@@ -53,7 +53,7 @@ pub fn post_bash(dir: &SessionDir, input: &HookInput) -> HookResult {
     let before: StatusSnapshot = serde_json::from_slice(&bytes)?;
     let git = Git::new(&before.root);
     let after = status(&before.root)?;
-    let committed = committed(&git, &before.head).unwrap_or_default();
+    let committed = committed_paths(&git, &before.head).unwrap_or_default();
     let meta = dir.read_meta();
     let start_head = meta.as_ref().and_then(|m| m.start_head.as_deref());
 
@@ -68,7 +68,9 @@ pub fn post_bash(dir: &SessionDir, input: &HookInput) -> HookResult {
                 Change::Clean => Some(before.head.as_str()),
                 Change::Unknown => start_head,
             };
-            todo.push((path.clone(), change, rev.map(|r| format!("{r}:{rel}"))));
+            // `cat-file --batch` 입력은 줄 단위라 줄바꿈이 든 경로는 원본을 못 읽는다
+            let spec = rev.filter(|_| !rel.contains('\n')).map(|r| format!("{r}:{rel}"));
+            todo.push((path.clone(), change, spec));
         }
         paths.push(path);
     }
@@ -147,7 +149,7 @@ fn changed(
 
 /// Bash 중 HEAD가 바뀌었으면 두 커밋 사이에 바뀐 경로. 그대로면 빈 목록.
 /// 실패는 (Bash가 HEAD를 unborn으로 만듦 등) 부른 쪽이 빈 목록으로 본다. status 비교 결과는 그대로 쓴다
-fn committed(git: &Git, pre_head: &str) -> Result<Vec<String>, GitError> {
+fn committed_paths(git: &Git, pre_head: &str) -> Result<Vec<String>, GitError> {
     let head = git.run_str(&["rev-parse", "HEAD"])?;
     if head == pre_head {
         return Ok(Vec::new());
@@ -161,24 +163,16 @@ fn committed(git: &Git, pre_head: &str) -> Result<Vec<String>, GitError> {
         .collect())
 }
 
-/// `<rev>:<path>`마다 blob 내용을 `git cat-file --batch` 한 번으로 읽는다. 결과는 `specs`와 같은 순서이고
+/// `<rev>:<path>`(줄바꿈 없음)마다 blob 내용을 `git cat-file --batch` 한 번으로 읽는다. 결과는 `specs`와 같은 순서이고
 /// spec이 없거나, 그 커밋에 경로가 없거나, blob이 아니면 `None`
 fn read_blobs(git: &Git, specs: &[Option<&str>]) -> Result<Vec<Option<Vec<u8>>>, GitError> {
-    // 입력은 줄 단위라 줄바꿈이 든 경로는 보내지 않는다
-    let sent: Vec<&str> = specs.iter().flatten().copied().filter(|s| !s.contains('\n')).collect();
-    if sent.is_empty() {
+    let input: String = specs.iter().flatten().map(|s| format!("{s}\n")).collect();
+    if input.is_empty() {
         return Ok(vec![None; specs.len()]);
     }
-    let input: String = sent.iter().map(|s| format!("{s}\n")).collect();
     let out = git.run_with_input(&["cat-file", "--batch"], input.as_bytes())?;
     let mut blobs = parse_batch(&out).into_iter();
-    Ok(specs
-        .iter()
-        .map(|spec| match spec {
-            Some(s) if !s.contains('\n') => blobs.next().flatten(),
-            _ => None,
-        })
-        .collect())
+    Ok(specs.iter().map(|spec| spec.and_then(|_| blobs.next().flatten())).collect())
 }
 
 /// `cat-file --batch` 출력. 객체는 `<oid> <type> <size>\n<내용>\n`, 없으면 `<입력> missing\n`처럼
