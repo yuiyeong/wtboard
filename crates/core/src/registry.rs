@@ -9,6 +9,7 @@ use crate::git::worktrees::common_dir;
 use crate::git::Git;
 use crate::repo::{Repo, RepoOptions, RepoSummary, Sink};
 use crate::store::config::Config;
+use crate::store::viewed::ViewedStore;
 use crate::worktree::Worktree;
 
 /// 열지 못한 config entry, 또는 entry에 대한 경고
@@ -32,7 +33,7 @@ struct Group {
 
 impl Registry {
     /// config entry를 common dir로 묶고 레포를 병렬로 연다. 실패한 entry는 `errors`에 남기고 나머지는 계속 연다
-    pub fn open(config: &Config, gh: Gh, sink: Sink) -> Self {
+    pub fn open(config: &Config, gh: Gh, viewed: Arc<ViewedStore>, sink: Sink) -> Self {
         let mut errors = Vec::new();
         let mut groups: Vec<Group> = Vec::new();
         for entry in &config.repos {
@@ -66,7 +67,7 @@ impl Registry {
             let handles: Vec<_> = groups
                 .iter()
                 .map(|g| {
-                    let opts = RepoOptions { base: g.base.clone(), gh: gh.clone(), poll };
+                    let opts = RepoOptions { base: g.base.clone(), gh: gh.clone(), poll, viewed: viewed.clone() };
                     let sink = sink.clone();
                     s.spawn(move || {
                         Repo::open(&g.common_dir, opts, sink)
@@ -94,6 +95,11 @@ impl Registry {
 
     pub fn errors(&self) -> &[EntryError] {
         &self.errors
+    }
+
+    /// 열 때 말고 나중에 알게 된 문제를 오류 목록 끝에 붙인다
+    pub fn warn(&mut self, e: EntryError) {
+        self.errors.push(e);
     }
 
     pub fn worktree(&self, id: &str) -> Option<Arc<Worktree>> {

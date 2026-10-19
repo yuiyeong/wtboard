@@ -9,6 +9,7 @@ use crate::gh::Gh;
 use crate::git::worktrees::{list_worktrees, WorktreeEntry};
 use crate::git::{Git, GitError};
 use crate::profile::Profile;
+use crate::store::viewed::ViewedStore;
 use crate::watch::{spawn_repo_watcher, spawn_watcher_with, EmitFn, GoneFn, RepoWatchHandle, WatchHandle};
 use crate::worktree::{Worktree, WorktreeSummary};
 
@@ -28,6 +29,8 @@ pub struct RepoOptions {
     pub base: Option<String>,
     pub gh: Gh,
     pub poll: Duration,
+    /// 모든 worktree가 나눠 쓰는 봤음 저장소
+    pub viewed: Arc<ViewedStore>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -147,7 +150,7 @@ impl Repo {
     }
 
     fn open_worktree(self: &Arc<Self>, entry: &WorktreeEntry) -> Opened {
-        let opened = Worktree::open_with(&entry.path, self.opts.base.clone(), self.opts.gh.clone());
+        let opened = Worktree::open_with(&entry.path, self.opts.base.clone(), self.opts.gh.clone(), self.opts.viewed.clone());
         let result = opened.map_err(|e| e.to_string()).and_then(|wt| {
             spawn_watcher_with(wt.clone(), self.opts.poll, self.sink.changed.clone(), self.on_gone())
                 .map(|h| (wt, h))

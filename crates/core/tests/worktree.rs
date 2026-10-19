@@ -1,10 +1,12 @@
 mod common;
 
 use std::path::Path;
+use std::sync::Arc;
 
 use common::{clone_on_feat_with_develop, gh_stub, TestRepo};
 use wtboard_core::git::base::BaseSource;
 use wtboard_core::profile::Profile;
+use wtboard_core::store::viewed::ViewedStore;
 use wtboard_core::watch::Target;
 use wtboard_core::worktree::{ChangeScope, Worktree};
 
@@ -227,7 +229,7 @@ fn editing_gitignore_drops_newly_ignored_files() {
 fn pr_base_replaces_origin_head_and_emits_base_scope() {
     let (_up, clone) = clone_on_feat_with_develop();
     let (_d, gh) = gh_stub("develop");
-    let wt = Worktree::open_with(clone.path(), None, gh).unwrap();
+    let wt = Worktree::open_with(clone.path(), None, gh, Arc::new(ViewedStore::in_memory())).unwrap();
     assert_eq!(wt.summary().base_source, BaseSource::Origin);
 
     assert_eq!(wt.claim_pr_lookup().as_deref(), Some("feat"));
@@ -245,7 +247,7 @@ fn pr_base_replaces_origin_head_and_emits_base_scope() {
 fn pr_base_without_local_remote_ref_keeps_origin_head() {
     let (_up, clone) = clone_on_feat_with_develop();
     let (_d, gh) = gh_stub("release"); // origin/release 없음
-    let wt = Worktree::open_with(clone.path(), None, gh).unwrap();
+    let wt = Worktree::open_with(clone.path(), None, gh, Arc::new(ViewedStore::in_memory())).unwrap();
     assert!(wt.claim_pr_lookup().is_some());
     assert_eq!(wt.refresh_pr_base("feat").unwrap(), None);
     assert_eq!(wt.summary().base_source, BaseSource::Origin);
@@ -255,7 +257,7 @@ fn pr_base_without_local_remote_ref_keeps_origin_head() {
 fn configured_base_never_asks_gh() {
     let (_up, clone) = clone_on_feat_with_develop();
     let (_d, gh) = gh_stub("develop");
-    let wt = Worktree::open_with(clone.path(), Some("origin/main".into()), gh).unwrap();
+    let wt = Worktree::open_with(clone.path(), Some("origin/main".into()), gh, Arc::new(ViewedStore::in_memory())).unwrap();
     assert_eq!(wt.claim_pr_lookup(), None);
 }
 
@@ -265,7 +267,7 @@ fn detached_head_never_asks_gh() {
     let (_up, clone) = clone_on_feat_with_develop();
     clone.git(&["checkout", "-q", "--detach"]);
     let (_d, gh) = gh_stub("develop");
-    let wt = Worktree::open_with(clone.path(), None, gh).unwrap();
+    let wt = Worktree::open_with(clone.path(), None, gh, Arc::new(ViewedStore::in_memory())).unwrap();
     assert_eq!(wt.claim_pr_lookup(), None);
 }
 
@@ -274,7 +276,7 @@ fn detached_head_never_asks_gh() {
 fn late_pr_result_for_a_previous_branch_is_discarded() {
     let (_up, clone) = clone_on_feat_with_develop();
     let (_d, gh) = gh_stub("develop");
-    let wt = Worktree::open_with(clone.path(), None, gh).unwrap();
+    let wt = Worktree::open_with(clone.path(), None, gh, Arc::new(ViewedStore::in_memory())).unwrap();
     assert_eq!(wt.claim_pr_lookup().as_deref(), Some("feat"));
     clone.git(&["checkout", "-q", "-b", "feat2"]);
     assert_eq!(wt.claim_pr_lookup().as_deref(), Some("feat2"));

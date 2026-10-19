@@ -10,13 +10,14 @@ use wtboard_core::gh::Gh;
 use wtboard_core::git::worktrees::common_dir;
 use wtboard_core::git::Git;
 use wtboard_core::repo::{Repo, RepoOptions, Sink};
+use wtboard_core::store::viewed::ViewedStore;
 
 /// final review #1: 새 worktree를 여는 동안(수 초) 레포 summary가 막히면 모든 command가 멈춘다
 #[test]
 fn summary_does_not_wait_for_a_worktree_being_opened() {
     let repo = TestRepo::new();
     let sink = Sink { changed: Arc::new(|_| {}), updated: Arc::new(|| {}) };
-    let opts = RepoOptions { base: Some("main".into()), gh: Gh::disabled(), poll: Duration::from_secs(30) };
+    let opts = RepoOptions { base: Some("main".into()), gh: Gh::disabled(), poll: Duration::from_secs(30), viewed: Arc::new(ViewedStore::in_memory()) };
     let r = Repo::open(&common_dir(&Git::new(repo.path())).unwrap(), opts, sink).unwrap();
 
     // 이제부터 untracked 목록 계산(worktree 열기의 일부)만 2초 걸리게 한다

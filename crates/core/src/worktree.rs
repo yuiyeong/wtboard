@@ -13,6 +13,7 @@ use crate::git::changes::list_changes;
 use crate::git::patch::file_patch;
 use crate::git::{Git, GitError};
 use crate::profile::Profile;
+use crate::store::viewed::ViewedStore;
 use crate::watch::{Target, WatchLayout};
 
 #[derive(Debug, thiserror::Error)]
@@ -114,17 +115,25 @@ pub struct Worktree {
     profile: Profile,
     configured_base: Option<String>,
     gh: Gh,
+    /// 봤음 상태. 읽고 쓰는 쪽은 다음 단계에서 붙는다
+    #[allow(dead_code)]
+    viewed: Arc<ViewedStore>,
     state: Mutex<State>,
     meta: Mutex<Meta>,
 }
 
 impl Worktree {
     pub fn open(path: &Path, configured_base: Option<String>) -> Result<Arc<Self>, WorktreeError> {
-        Self::open_with(path, configured_base, Gh::disabled())
+        Self::open_with(path, configured_base, Gh::disabled(), Arc::new(ViewedStore::in_memory()))
     }
 
     /// `gh`가 켜져 있으면 `claim_pr_lookup` / `refresh_pr_base`로 PR base를 반영할 수 있다
-    pub fn open_with(path: &Path, configured_base: Option<String>, gh: Gh) -> Result<Arc<Self>, WorktreeError> {
+    pub fn open_with(
+        path: &Path,
+        configured_base: Option<String>,
+        gh: Gh,
+        viewed: Arc<ViewedStore>,
+    ) -> Result<Arc<Self>, WorktreeError> {
         if !path.is_dir() {
             return Err(WorktreeError::Missing(path.to_path_buf()));
         }
@@ -142,6 +151,7 @@ impl Worktree {
             profile,
             configured_base,
             gh,
+            viewed,
             state: Mutex::new(State { base, merge_base: mb, files, hashes: HashMap::new() }),
             meta: Mutex::new(Meta { list_ms, ..Default::default() }),
         }))

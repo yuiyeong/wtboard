@@ -8,6 +8,7 @@ use wtboard_core::gh::Gh;
 use wtboard_core::registry::Registry;
 use wtboard_core::repo::Sink;
 use wtboard_core::store::config::Config;
+use wtboard_core::store::viewed::ViewedStore;
 
 fn sink() -> Sink {
     Sink { changed: Arc::new(|_| {}), updated: Arc::new(|| {}) }
@@ -21,7 +22,7 @@ fn registry(entries: &[(&Path, Option<&str>)]) -> Registry {
             toml += &format!("base = {b:?}\n");
         }
     }
-    Registry::open(&Config::parse(&toml).unwrap(), Gh::disabled(), sink())
+    Registry::open(&Config::parse(&toml).unwrap(), Gh::disabled(), Arc::new(ViewedStore::in_memory()), sink())
 }
 
 fn linked(repo: &TestRepo, name: &str, branch: &str) -> std::path::PathBuf {

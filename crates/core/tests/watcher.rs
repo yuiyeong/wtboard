@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use common::{clone_on_feat_with_develop, gh_stub, TestRepo};
 use wtboard_core::git::base::BaseSource;
+use wtboard_core::store::viewed::ViewedStore;
 use wtboard_core::watch::{spawn_watcher, spawn_watcher_with, WatchHandle};
 use wtboard_core::worktree::{ChangeScope, Worktree, WorktreeChanged};
 
@@ -64,7 +65,7 @@ fn linked_worktree_edit_is_detected() {
 fn pr_base_lookup_runs_in_background_after_start() {
     let (_up, clone) = clone_on_feat_with_develop();
     let (_d, gh) = gh_stub("develop");
-    let wt = Worktree::open_with(clone.path(), None, gh).unwrap();
+    let wt = Worktree::open_with(clone.path(), None, gh, Arc::new(ViewedStore::in_memory())).unwrap();
     let (tx, rx) = mpsc::channel();
     let _h = spawn_watcher(wt.clone(), Duration::from_secs(30), Arc::new(move |ev| {
         let _ = tx.send(ev);

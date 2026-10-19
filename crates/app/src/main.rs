@@ -7,6 +7,7 @@ use wtboard_core::gh::Gh;
 use wtboard_core::registry::{EntryError, Registry};
 use wtboard_core::repo::{RepoSummary, Sink};
 use wtboard_core::store::config::Config;
+use wtboard_core::store::viewed::ViewedStore;
 use wtboard_core::worktree::{Worktree, WorktreeChanged};
 
 /// Registry는 background thread에서 열고 끝나면 채운다. command는 채워질 때까지 기다린다
@@ -80,7 +81,23 @@ fn open_registry(handle: &AppHandle) -> Result<Registry, String> {
             let _ = updated.emit("worktrees-updated", ());
         }),
     };
-    Ok(Registry::open(&config, Gh::detect(), sink))
+    // 봤음 상태는 config 파일 옆에 둔다. 열 수 없으면 이번 실행만 메모리에 둔다
+    let state_path = path.with_file_name("state.sqlite");
+    let (viewed, warning) = match ViewedStore::open(&state_path) {
+        Ok(store) => (store, None),
+        Err(e) => (
+            ViewedStore::in_memory(),
+            Some(EntryError {
+                path: state_path.display().to_string(),
+                message: format!("봤음 상태를 저장할 수 없음: {e}"),
+            }),
+        ),
+    };
+    let mut reg = Registry::open(&config, Gh::detect(), Arc::new(viewed), sink);
+    if let Some(w) = warning {
+        reg.warn(w);
+    }
+    Ok(reg)
 }
 
 fn main() {

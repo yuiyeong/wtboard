@@ -8,6 +8,7 @@ use wtboard_core::gh::Gh;
 use wtboard_core::git::worktrees::common_dir;
 use wtboard_core::git::Git;
 use wtboard_core::repo::{Repo, RepoOptions, Sink};
+use wtboard_core::store::viewed::ViewedStore;
 
 fn open(repo: &TestRepo, base: Option<&str>) -> (Arc<Repo>, mpsc::Receiver<()>) {
     let (tx, rx) = mpsc::channel();
@@ -17,7 +18,7 @@ fn open(repo: &TestRepo, base: Option<&str>) -> (Arc<Repo>, mpsc::Receiver<()>) 
             let _ = tx.send(());
         }),
     };
-    let opts = RepoOptions { base: base.map(String::from), gh: Gh::disabled(), poll: Duration::from_secs(30) };
+    let opts = RepoOptions { base: base.map(String::from), gh: Gh::disabled(), poll: Duration::from_secs(30), viewed: Arc::new(ViewedStore::in_memory()) };
     let r = Repo::open(&common_dir(&Git::new(repo.path())).unwrap(), opts, sink).unwrap();
     std::thread::sleep(Duration::from_millis(300)); // FSEvents stream 시작 대기
     (r, rx)
