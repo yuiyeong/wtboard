@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Diff, Hunk, parseDiff } from 'react-diff-view';
 import { getPatch, type ChangedFile, type PatchBody } from '../api';
@@ -6,6 +6,7 @@ import { fileAnchorId } from '../lib/anchor';
 import { tokenizeHunks } from '../lib/highlight';
 import { languageForPath } from '../lib/language';
 import { useInView } from '../lib/useInView';
+import { initiallyOpen, nextOpen } from '../lib/viewed';
 import type { ViewType } from '../store';
 import { LineCounts } from './FileTree';
 
@@ -13,13 +14,22 @@ interface Props {
   worktreeId: string;
   file: ChangedFile;
   viewType: ViewType;
+  /** 참조가 안정적이어야 memo가 유지된다 */
+  onSetViewed: (file: ChangedFile, viewed: boolean, hash: string | null) => void;
 }
 
 // 레포 목록이 갱신될 때마다(파일 event마다) 화면 전체가 다시 그려지므로, 바뀐 파일만 다시 그린다
-export const FileDiff = memo(function FileDiff({ worktreeId, file, viewType }: Props) {
+export const FileDiff = memo(function FileDiff({ worktreeId, file, viewType, onSetViewed }: Props) {
   const [ref, inView] = useInView<HTMLElement>();
-  // 생성 파일은 접힌 채로 시작한다. 접혀 있으면 patch를 계산하지 않는다
-  const [open, setOpen] = useState(!file.collapsed);
+  // 생성 파일과 본 파일은 접힌 채로 시작한다. 접혀 있으면 patch를 계산하지 않는다
+  const [open, setOpen] = useState(() => initiallyOpen(file));
+  // 봤음 상태가 바뀌면 펼침을 맞춘다 (체크하면 접고, 해제하거나 다시 바뀌면 펼친다)
+  const prevViewed = useRef(file.viewed);
+  useEffect(() => {
+    const prev = prevViewed.current;
+    prevViewed.current = file.viewed;
+    setOpen((open) => nextOpen(prev, file.viewed, open));
+  }, [file.viewed]);
   const patch = useQuery({
     queryKey: ['patch', worktreeId, file.path, 'branch'],
     queryFn: () => getPatch(worktreeId, 'branch', file.path),
@@ -34,8 +44,20 @@ export const FileDiff = memo(function FileDiff({ worktreeId, file, viewType }: P
       >
         <span className="w-3 text-xs text-gray-500">{open ? '▾' : '▸'}</span>
         <span className="flex-1 truncate font-mono">{file.path}</span>
+        {file.viewed === 'changed' && (
+          <span className="rounded bg-amber-100 px-1.5 text-xs text-amber-700">다시 바뀜</span>
+        )}
         {file.collapsed && !open && <span className="text-xs text-gray-400">생성 파일</span>}
         <LineCounts file={file} />
+        {/* checkbox 클릭이 header의 접기 toggle로 번지지 않게 막는다 */}
+        <label className="flex items-center gap-1 text-xs text-gray-600" onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={file.viewed === 'viewed'}
+            onChange={(e) => onSetViewed(file, e.target.checked, patch.data?.hash ?? null)}
+          />
+          봤음
+        </label>
       </header>
       {open &&
         (patch.error ? (

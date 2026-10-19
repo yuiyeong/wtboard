@@ -1,6 +1,7 @@
 import type { EntryError, Profile, RepoSummary } from '../api';
 import { worktreeLabel, type Selection } from '../lib/selection';
 import { formatRelative } from '../lib/time';
+import { countLabel } from '../lib/viewed';
 import { useNow } from '../lib/useNow';
 
 const PROFILE_BADGE: Record<Profile, string | null> = { python: 'Py', node: 'Node', flutter: 'Flutter', default: null };
@@ -37,7 +38,13 @@ export function Sidebar({ repos, errors, selectedId, onSelect }: Props) {
                     <span className="flex w-full items-center gap-2">
                       {w.error && <span className="text-amber-600">⚠</span>}
                       <span className="flex-1 truncate font-mono text-xs">{worktreeLabel(w)}</span>
-                      {!w.error && <span className="text-xs text-gray-500 tabular-nums">{w.changedFiles}</span>}
+                      {!w.error && (
+                        <span
+                          className={`text-xs tabular-nums ${w.unviewedFiles > 0 ? 'text-gray-800' : 'text-gray-500'}`}
+                        >
+                          {countLabel(w)}
+                        </span>
+                      )}
                     </span>
                     {w.lastChangedAt !== null && (
                       <span className="text-[11px] text-gray-400">{formatRelative(w.lastChangedAt, now)}</span>

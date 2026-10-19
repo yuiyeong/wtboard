@@ -3,7 +3,9 @@ import { useQuery } from '@tanstack/react-query';
 import { listFiles, type RepoSummary, type WorktreeSummary } from '../api';
 import { worktreeLabel } from '../lib/selection';
 import { buildTree, flattenFiles, splitCollapsed, type TreeNode } from '../lib/tree';
+import { viewedProgress } from '../lib/viewed';
 import { useUiStore } from '../store';
+import { useSetViewed } from '../useSetViewed';
 import { FileDiff } from './FileDiff';
 import { FileTree } from './FileTree';
 import { FsmonitorBanner } from './FsmonitorBanner';
@@ -25,6 +27,9 @@ export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: 
     queryKey: ['files', worktree.id, 'branch'],
     queryFn: () => listFiles(worktree.id, 'branch'),
   });
+  const onSetViewed = useSetViewed(worktree.id);
+  const progress = useMemo(() => viewedProgress(files.data ?? []), [files.data]);
+  const allViewed = progress.total > 0 && progress.viewed === progress.total;
   const { tree, ordered } = useMemo(() => {
     const { visible, collapsed } = splitCollapsed(files.data ?? []);
     const tree: TreeNode[] = buildTree(visible);
@@ -45,6 +50,9 @@ export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: 
           {worktree.baseSource === 'pr' && ' (PR)'}
         </span>
         <span className="flex-1" />
+        <span className={`tabular-nums ${allViewed ? 'text-green-600' : 'text-gray-500'}`}>
+          확인 {progress.viewed}/{progress.total}
+        </span>
         <div className="flex overflow-hidden rounded border border-gray-300">
           {(['split', 'unified'] as const).map((v) => (
             <button
@@ -69,7 +77,7 @@ export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: 
           {files.error && <p className="text-red-600">{String(files.error)}</p>}
           {files.data?.length === 0 && <p className="text-gray-500">base 대비 변경 사항이 없습니다.</p>}
           {ordered.map((f) => (
-            <FileDiff key={f.path} worktreeId={worktree.id} file={f} viewType={viewType} />
+            <FileDiff key={f.path} worktreeId={worktree.id} file={f} viewType={viewType} onSetViewed={onSetViewed} />
           ))}
         </main>
       </div>

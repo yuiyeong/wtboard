@@ -17,6 +17,13 @@ const STATUS_COLOR: Record<ChangedFile['status'], string> = {
   untracked: 'text-green-600',
 };
 
+/** status 글자 앞의 봤음 표시. 미확인은 빈칸 */
+const VIEWED_MARK: Record<ChangedFile['viewed'], { mark: string; color: string }> = {
+  none: { mark: '', color: '' },
+  viewed: { mark: '☑', color: 'text-gray-400' },
+  changed: { mark: '●', color: 'text-amber-600' },
+};
+
 const INDENT_PX = 14;
 
 /** `initiallyCollapsed`: 처음에 닫아 둘 디렉터리 path (접힌 파일 묶음) */
@@ -48,6 +55,7 @@ function Nodes({ nodes, depth, collapsed, toggle }: NodesProps) {
   return nodes.map((node) => {
     if (node.kind === 'file') {
       const f = node.file;
+      const viewed = VIEWED_MARK[f.viewed];
       return (
         <li key={f.path}>
           <button
@@ -56,8 +64,9 @@ function Nodes({ nodes, depth, collapsed, toggle }: NodesProps) {
             title={f.path}
             onClick={() => document.getElementById(fileAnchorId(f.path))?.scrollIntoView({ block: 'start' })}
           >
+            <span className={`w-3 shrink-0 text-xs ${viewed.color}`}>{viewed.mark}</span>
             <span className={`w-3 font-mono text-xs ${STATUS_COLOR[f.status]}`}>{STATUS_LABEL[f.status]}</span>
-            <span className="flex-1 truncate">{node.name}</span>
+            <span className={`flex-1 truncate ${f.viewed === 'viewed' ? 'text-gray-400' : ''}`}>{node.name}</span>
             <LineCounts file={f} />
           </button>
         </li>
