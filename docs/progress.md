@@ -119,17 +119,17 @@
 - 줄 리뷰 코멘트(`state.sqlite`의 `comments`), `wtboard-hook prompt-submit`의 자동 첨부(`additionalContext`), 코멘트 목록 popover와 "마크다운으로 복사", sidebar 💬n, 메뉴바(tray) 미확인 수와 worktree 바로 가기, 창 닫기 = 숨기기, 항상 위에를 추가했다. `state.sqlite`에 `PRAGMA user_version`을 넣었다(schema 1).
 - 새 command: `list_comments`, `add_comment`, `update_comment`, `delete_comment`, `clear_sent_comments`, `copy_comments`, `mark_comments_sent`. 새 event: `select-worktree`. `WorktreeSummary.unsentComments`, `list_repos`의 `autoAttachComments`.
 - fixture(`/private/tmp/claude-501/...`, `WTBOARD_CONFIG`)에서 실제 `claude -p`(claude 2.1.303)로 확인했다. 앱은 `state.sqlite`를 만들기 위해 한 번 띄웠고, 코멘트는 sqlite3로 직접 넣었다.
-  - 첨부: 추가된 줄(`new`)과 삭제된 줄(`old`)에 코멘트 2개를 넣고 `claude --plugin-dir plugin/wtboard -p "리뷰 코멘트 반영해 줘"`를 돌렸다. Claude가 두 줄을 요청대로 고쳤고(`def health` → `def get_health`, `title="fixture"` → `title="wtboard-fixture"`), 두 코멘트가 `sent_at`과 `sent_to`(= session id)로 전송됨이 됐다. 앱 화면에도 "전송됨 · 21:49"로 보였다.
+  - 첨부: 추가된 줄(`new`)과 삭제된 줄(`old`)에 코멘트 2개를 넣고 `claude --plugin-dir plugin/wtboard -p "리뷰 코멘트 반영해 줘"`를 돌렸다. Claude가 두 줄을 요청대로 고쳤고(`def health` → `def get_health`, `title="fixture"` → `title="wtboard-fixture"`), 두 코멘트가 `sent_at`과 `sent_to`(= session id)로 전송됨이 됐다는 것은 DB로 확인했다. 이 첫 첨부(코멘트 1·2)의 앱 화면은 보지 않았다. 앱의 "전송됨 · 21:49" 표시는 아래 cap 테스트로 보낸 코멘트(3·4)를 screenshot으로 확인했다.
   - `systemMessage`: `--output-format stream-json --verbose` 출력에 `{"type":"system","subtype":"informational","content":"UserPromptSubmit says: wtboard: 리뷰 코멘트 2개를 첨부했습니다"}`로 보인다. 첨부 본문(`additionalContext`)은 transcript 출력에 나오지 않는다. 일반 `-p` text 출력과 대화형 화면에서 어떻게 보이는지는 확인하지 못했다.
-  - 10,000자 cap: 따옴표와 개행이 가득한 코멘트 2개로 첨부를 만들었다(문자 수 8,642, JSON escape 뒤 문자열 12,041자, stdout 11,687 byte). `claude -p "첨부된 리뷰 코멘트의 마지막 코멘트 body 마지막 단어만 그대로 출력해"`에 Claude가 마지막 줄의 sentinel을 그대로 답했고 파일 읽기 tool을 쓰지 않았다. cap은 decode된 `additionalContext` 문자열에 걸린다는 판단이 맞다. render의 9,000자 cap이 그 안이다.
+  - 10,000자 cap: 따옴표와 개행이 가득한 코멘트 2개로 첨부를 만들었다(문자 수 8,642. hook stdout은 개행·따옴표가 escape된 JSON이라 11,687 byte로 둘 다 1만을 넘는다). `claude -p "첨부된 리뷰 코멘트의 마지막 코멘트 body 마지막 단어만 그대로 출력해"`에 Claude가 마지막 줄의 sentinel을 그대로 답했고 파일 읽기 tool을 쓰지 않았다. cap은 decode된 `additionalContext` 문자열에 걸린다는 판단이 맞다. render의 9,000자 cap이 그 안이다.
   - `auto_attach_comments = false`: 새 미전송 코멘트를 넣고 같은 prompt를 돌렸다. `UserPromptSubmit says` 메시지가 없었고, Claude는 코멘트를 찾지 못해 파일을 고치지 않았다. 코멘트는 미전송으로 남았다. sidebar와 header에는 `💬 1`, `미전송 1`로 보였다.
   - fixture worktree의 `.git/index` mtime은 위 세 번의 `claude` 실행(Claude 자신의 `git status`·`git diff` 포함)과 앱 실행 전후로 같았다.
-- hook 속도(release): 첨부 경로 포함 약 12ms.
+- hook 속도(release): 첨부 경로 포함 약 12ms (Task 3의 shell `time` 20회 측정. 이번 실제 확인에서 다시 재지 않았다).
 - 최종 리뷰에서 고친 것: 500자를 넘는 줄의 코멘트가 snippet 비교 때문에 늘 "위치가 바뀐 코멘트"로 보이던 것, live diff가 갱신될 때(hunk remount) 쓰던 코멘트 입력이 사라지던 것(draft를 `useDrafts`로 유지하고 anchor로 배치).
 
 ## 5단계에서 정한 것 (spec과 다른 점)
 
-- spec 3절의 "JSON escape 뒤 길이도 10,000자 이하" 재검사는 하지 않는다. 위 실제 확인에서 escape 뒤 12,041자도 그대로 도착했다. render의 문자(char) cap 9,000자만 쓴다.
+- spec 3절의 "JSON escape 뒤 길이도 10,000자 이하" 재검사는 하지 않는다. 위 실제 확인에서 escape 뒤 길이가 1만을 넘는 첨부(stdout 11,687 byte)도 그대로 도착했다. render의 문자(char) cap 9,000자만 쓴다.
 - 코멘트 하나가 cap을 넘더라도 그 코멘트가 첫 번째면 포함한다 (아니면 진행이 없다). body 4,000자 + snippet 500자라 실제로는 거의 없다.
 - 남은 수 안내("코멘트 n개가 더 있습니다")는 닫는 tag 안쪽, 마지막에 둔다.
 - `StoreError`에 `Emit`을 추가했다 (hook이 출력에 실패하면 commit하지 않는다).
@@ -160,13 +160,14 @@
 - 입력 한 글자마다 diff widget 전체를 다시 그린다 (큰 diff에서 typing이 느릴 수 있다).
 - 저장 직후 refetch 전에 widget이 잠깐 깜빡일 수 있다. popover의 copy/clear 오류는 다시 열어도 남는다.
 - 접근성: `+` 버튼은 keyboard로 못 누르고, popover에 aria 속성과 Esc 닫기가 없고, textarea에 label이 없다.
+- `select-worktree`가 `['repos']` cache가 생기기 전에 오면 버려진다. 앱을 띄운 직후 메뉴바에서 worktree를 고르면 반응이 없을 수 있다.
 - 메뉴바: 메뉴 갱신이 실패해도 갱신한 것으로 기록해 다음 변경까지 stale하다. `set_always_on_top`이 실패하면 check 표시가 어긋난 채 남는다. settings가 열리지 않으면(레포 없음 등) 항상 위에 저장이 조용히 빠진다. 토글이 main thread에서 SQLite에 쓴다 (busy 최대 5초).
 - `list_repos`의 미전송 수 query가 실패하면 0으로 보인다. 깨진 `state.sqlite`는 경고를 3개(봤음, 코멘트, 설정) 띄운다.
 - hook: attach가 panic하면 turn 기록도 건너뛴다. DB 존재를 확인하기 전에 `git rev-parse`(약 6ms)를 먼저 한다.
 
 ## 6단계 후보
 
-- spec 범위 밖에 둔 것: 여러 줄 범위 코멘트, 파일 단위 코멘트, 답글(thread), Claude의 답을 코멘트에 연결하기("해결됨" 자동 판정).
+- spec 범위 밖에 둔 것: 여러 줄 범위 코멘트, 파일 단위 코멘트, 답글(thread), Claude의 답을 코멘트에 연결하기("해결됨" 자동 판정), 알림(notification center).
 - 옛 hook binary 감지와 hook binary를 앱 번들에 포함하고 설치를 앱에서 안내.
 - fork 레포의 PR base: `remote_branch`가 `origin`만 본다 (`upstream` remote 미지원).
 - 파일 event마다 sidebar 갱신을 위해 모든 worktree summary를 다시 계산한다 (worktree당 git 2회: branch, fsmonitor). 레포가 많아지면 branch·fsmonitor cache를 검토.

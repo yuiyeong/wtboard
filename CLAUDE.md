@@ -18,7 +18,7 @@ pnpm --dir ui build          # 타입 체크 + 번들
 scripts/fixtures.sh <dir>    # UI 확인용 fixture 레포 3개 + config.toml
 WTBOARD_CONFIG=<dir>/config.toml pnpm tauri dev   # fixture로 실행
 scripts/install-hook.sh      # wtboard-hook release 빌드 → ~/.wtboard/bin/
-WTBOARD_CONFIG=<dir>/config.toml WTBOARD_HOOK_BIN=$PWD/target/debug/wtboard-hook claude --plugin-dir plugin/wtboard -p "리뷰 코멘트 반영해 줘"   # 설치 없이 debug hook으로 첨부 확인 (worktree 안에서)
+W=$PWD; cd <fixture worktree> && WTBOARD_CONFIG=<dir>/config.toml WTBOARD_HOOK_BIN=$W/target/debug/wtboard-hook claude --plugin-dir $W/plugin/wtboard -p "리뷰 코멘트 반영해 줘" --permission-mode acceptEdits   # 설치 없이 debug hook으로 첨부 확인. $W = wtboard repo root, 실행은 fixture worktree 안에서
 ```
 
 plugin 설치는 사용자가 직접 한다: `claude plugin marketplace add <repo>/plugin` 후 `claude plugin install wtboard@wtboard-local`.
