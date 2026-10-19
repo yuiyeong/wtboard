@@ -325,14 +325,14 @@ exec "$BIN" "$@"
 | 종류 | 이름 | 설명 |
 |---|---|---|
 | command | `list_repos` | 레포 + worktree 요약 (변경 파일 수, 미확인 수, 활성 세션) |
-| command | `list_files(worktree_id, view)` | 파일 목록. `view` = `branch` / `session` / `turn` |
-| command | `get_patch(worktree_id, view, path)` | 파일 하나의 diff |
+| command | `list_files(worktree_id, view, session_id)` | 파일 목록. `view` = `branch` / `session` / `turn` |
+| command | `get_patch(worktree_id, view, path, session_id)` | 파일 하나의 diff |
 | command | `set_viewed(worktree_id, path, diff_hash)` | 봤음 체크 |
 | command | `add_comment(worktree_id, path, line, body)` | 리뷰 코멘트 추가 |
 | command | `list_sessions(worktree_id)` | 해당 worktree의 세션 목록 |
 | event | `worktree-changed` | `{worktree_id, changed_paths, scope}` (scope = `file` / `list` / `base`) |
 | event | `worktrees-updated` | worktree 생성/삭제 |
-| event | `session-updated` | `{session_id, turn}` |
+| event | `session-updated` | `{session_ids, worktree_ids}` |
 
 ## 13. 개발 순서
 
