@@ -44,12 +44,7 @@ export interface PlacedComments {
  * `old` side는 view마다 before가 다르므로 단 view와 지금 view가 같을 때만 맞춘다
  */
 export function placeComments(comments: Comment[], changes: ChangeData[], view: View): PlacedComments {
-  const bySideLine = new Map<string, ChangeData>();
-  for (const change of changes) {
-    if (change.type === 'delete') bySideLine.set(`old:${change.lineNumber}`, change);
-    else if (change.type === 'insert') bySideLine.set(`new:${change.lineNumber}`, change);
-    else bySideLine.set(`new:${change.newLineNumber}`, change);
-  }
+  const bySideLine = new Map(changes.map((change) => [sideLineOf(change), change]));
   const byChangeKey = new Map<string, Comment[]>();
   const outdated: Comment[] = [];
   for (const c of comments) {
@@ -64,6 +59,38 @@ export function placeComments(comments: Comment[], changes: ChangeData[], view: 
     else byChangeKey.set(key, [c]);
   }
   return { byChangeKey, outdated };
+}
+
+/** 코멘트 위치 맞추기에 쓰는 `side:line` (anchorOf와 같은 규칙: 삭제 줄은 옛 번호, 나머지는 새 번호) */
+function sideLineOf(change: ChangeData): string {
+  if (change.type === 'delete') return `old:${change.lineNumber}`;
+  if (change.type === 'insert') return `new:${change.lineNumber}`;
+  return `new:${change.newLineNumber}`;
+}
+
+/**
+ * 아직 저장하지 않은 새 코멘트 입력. diff가 실시간으로 바뀌어도(hunk가 다시 그려져도) 쓰던 글이 남게
+ * 파일 diff 단위 state로 두고, 그릴 때마다 `placeDraft`로 줄을 다시 찾는다
+ */
+export interface Draft {
+  anchor: Anchor;
+  body: string;
+}
+
+/**
+ * 입력을 둘 줄의 change key. 위치는 change key(줄 순서)가 아니라 (side, line)과 내용으로 맞춘다.
+ * 맞는 줄이 없으면 null (위치가 바뀐 코멘트 묶음에 둔다). draft는 지금 view에서 열었으므로 view는 보지 않는다
+ */
+export function placeDraft(anchor: Anchor, changes: ChangeData[]): string | null {
+  const target = `${anchor.side}:${anchor.line}`;
+  const change = changes.find((c) => sideLineOf(c) === target);
+  return change && snippetOf(change.content) === anchor.snippet ? getChangeKey(change) : null;
+}
+
+/** 다른 줄의 `+`를 눌렀을 때. 쓰던 글이 있으면 버리지 않고 그대로 둔다 */
+export function nextDraft(current: Draft | null, anchor: Anchor): Draft {
+  if (current && current.body.trim() !== '') return current;
+  return { anchor, body: '' };
 }
 
 /** 목록 순서: 미전송 먼저 → path → line → id. 서버(`list_comments`)와 같다 */

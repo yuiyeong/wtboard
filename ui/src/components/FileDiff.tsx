@@ -3,13 +3,14 @@ import { useQuery } from '@tanstack/react-query';
 import { Diff, getChangeKey, Hunk, parseDiff, type ChangeData, type RenderGutter } from 'react-diff-view';
 import { getPatch, type ChangedFile, type Comment, type NewComment, type PatchBody, type View } from '../api';
 import { fileAnchorId } from '../lib/anchor';
-import { anchorOf, placeComments, type Anchor } from '../lib/comments';
+import { anchorOf, placeComments, placeDraft, type Anchor } from '../lib/comments';
 import { tokenizeHunks } from '../lib/highlight';
 import { languageForPath } from '../lib/language';
 import { patchKey } from '../lib/sessions';
 import { useInView } from '../lib/useInView';
 import { initiallyOpen, nextOpen } from '../lib/viewed';
 import type { ViewType } from '../store';
+import { useDrafts, type Drafts } from '../useDrafts';
 import { CommentInput, CommentThread, SavedComment, type OnDeleteComment, type OnUpdateComment } from './CommentWidget';
 import { LineCounts } from './FileTree';
 
@@ -62,6 +63,8 @@ export const FileDiff = memo(function FileDiff({
     enabled: inView && open, // 화면에 보이고 펼쳐져 있을 때만 계산
   });
   const unsent = commentProps.comments.filter((c) => c.sentAt === null).length;
+  // 쓰던 글은 patch가 바뀌거나 접었다 펴도 남게 여기에 둔다
+  const drafts = useDrafts();
 
   return (
     <section ref={ref} id={fileAnchorId(file.path)} className="mb-4 rounded border border-gray-200">
@@ -101,13 +104,20 @@ export const FileDiff = memo(function FileDiff({
           </label>
         )}
       </header>
+      {/* 다시 읽기가 실패해도 이전 diff(와 그 안에서 쓰던 글)는 그대로 두고 오류만 위에 보인다 */}
+      {open && patch.error && <p className="p-3 text-sm text-red-600">{String(patch.error)}</p>}
       {open &&
-        (patch.error ? (
-          <p className="p-3 text-sm text-red-600">{String(patch.error)}</p>
-        ) : patch.data ? (
-          <PatchView body={patch.data.body} viewType={viewType} path={file.path} view={view} {...commentProps} />
+        (patch.data ? (
+          <PatchView
+            body={patch.data.body}
+            viewType={viewType}
+            path={file.path}
+            view={view}
+            drafts={drafts}
+            {...commentProps}
+          />
         ) : (
-          <div className="h-20" />
+          !patch.error && <div className="h-20" />
         ))}
     </section>
   );
@@ -118,15 +128,16 @@ interface PatchViewProps extends CommentProps {
   viewType: ViewType;
   path: string;
   view: View;
+  drafts: Drafts;
 }
 
-function PatchView({ body, ...props }: PatchViewProps) {
-  if (body.kind === 'text') return <TextDiff diff={body.diff} {...props} />;
+function PatchView({ body, viewType, comments, ...props }: PatchViewProps) {
+  if (body.kind === 'text') return <TextDiff diff={body.diff} viewType={viewType} comments={comments} {...props} />;
   const label = body.kind === 'binary' ? '바이너리 파일' : '1MB 초과 파일';
   return (
     <>
-      {/* 줄이 없으니 코멘트는 모두 위치가 바뀐 것으로 보인다 */}
-      <OutdatedComments outdated={props.comments} onUpdate={props.onUpdate} onDelete={props.onDelete} />
+      {/* 줄이 없으니 코멘트와 쓰던 글은 모두 위치가 바뀐 묶음에 보인다 */}
+      <OutdatedComments {...props} outdated={comments} draftOutdated />
       <p className="p-3 text-sm text-gray-500">
         {label} 변경됨 ({formatSize(body.oldSize)} → {formatSize(body.newSize)})
       </p>
@@ -134,22 +145,29 @@ function PatchView({ body, ...props }: PatchViewProps) {
   );
 }
 
-/** 입력 widget이 열린 줄 */
-interface OpenInput {
-  changeKey: string;
-  anchor: Anchor;
-}
-
 const NO_CHANGES: ChangeData[] = [];
 
-function TextDiff({ diff, viewType, path, view, comments, onAdd, onUpdate, onDelete }: Omit<PatchViewProps, 'body'> & { diff: string }) {
+function TextDiff({
+  diff,
+  viewType,
+  path,
+  view,
+  comments,
+  onAdd,
+  onUpdate,
+  onDelete,
+  drafts,
+}: Omit<PatchViewProps, 'body'> & { diff: string }) {
+  const commentProps = { drafts, onAdd, onUpdate, onDelete, path, view };
   const file = useMemo(() => parseDiff(diff)[0], [diff]);
   const tokens = useMemo(() => (file ? tokenizeHunks(file.hunks, languageForPath(path)) : undefined), [file, path]);
   const changes = useMemo(() => file?.hunks.flatMap((h) => h.changes) ?? NO_CHANGES, [file]);
   const placed = useMemo(() => placeComments(comments, changes, view), [comments, changes, view]);
-  const [input, setInput] = useState<OpenInput | null>(null);
+  // 쓰던 입력은 change key가 아니라 줄 (side, line)과 내용으로 매번 다시 찾는다
+  const draftKey = drafts.draft && placeDraft(drafts.draft.anchor, changes);
 
   // unified는 한 줄에 gutter가 둘이라 new 쪽에만 `+`를 둔다. split은 누른 쪽 change에 단다
+  const { open } = drafts;
   const renderGutter = useCallback<RenderGutter>(
     ({ change, side, inHoverState, renderDefault }) => (
       <>
@@ -157,7 +175,7 @@ function TextDiff({ diff, viewType, path, view, comments, onAdd, onUpdate, onDel
           <button
             title="코멘트 달기"
             className="float-left -ml-[0.5ch] w-4 rounded bg-blue-600 text-xs leading-4 text-white hover:bg-blue-700"
-            onClick={() => setInput({ changeKey: getChangeKey(change), anchor: anchorOf(change, side) })}
+            onClick={() => open(anchorOf(change, side))}
           >
             +
           </button>
@@ -165,46 +183,36 @@ function TextDiff({ diff, viewType, path, view, comments, onAdd, onUpdate, onDel
         {renderDefault()}
       </>
     ),
-    [viewType],
+    [viewType, open],
   );
 
   const widgets = useMemo(() => {
+    const keys = new Set(placed.byChangeKey.keys());
+    if (draftKey) keys.add(draftKey);
     const out: Record<string, ReactNode> = {};
-    for (const [key, list] of placed.byChangeKey) {
-      out[key] = <CommentThread comments={list} onUpdate={onUpdate} onDelete={onDelete} />;
-    }
-    if (input) {
-      const { anchor } = input;
-      out[input.changeKey] = (
-        <>
-          {out[input.changeKey]}
-          <CommentInput
-            onSave={async (body) => {
-              await onAdd({ path, side: anchor.side, line: anchor.line, view, snippet: anchor.snippet, body });
-              setInput(null);
-            }}
-            onCancel={() => setInput(null)}
-          />
-        </>
+    for (const key of keys) {
+      const list = placed.byChangeKey.get(key);
+      out[key] = (
+        <div className="space-y-2 bg-gray-50 px-3 py-2 font-sans">
+          {list && <CommentThread comments={list} onUpdate={onUpdate} onDelete={onDelete} drafts={drafts} />}
+          {key === draftKey && <DraftInput drafts={drafts} onAdd={onAdd} path={path} view={view} />}
+        </div>
       );
     }
-    for (const key of Object.keys(out)) {
-      out[key] = <div className="space-y-2 bg-gray-50 px-3 py-2 font-sans">{out[key]}</div>;
-    }
     return out;
-  }, [placed, input, path, view, onAdd, onUpdate, onDelete]);
+  }, [placed, draftKey, drafts, path, view, onAdd, onUpdate, onDelete]);
 
   if (!file || file.hunks.length === 0) {
     return (
       <>
-        <OutdatedComments outdated={comments} onUpdate={onUpdate} onDelete={onDelete} />
+        <OutdatedComments {...commentProps} outdated={comments} draftOutdated />
         <p className="p-3 text-sm text-gray-500">내용 변경 없음 (빈 파일 또는 권한 변경)</p>
       </>
     );
   }
   return (
     <>
-      <OutdatedComments outdated={placed.outdated} onUpdate={onUpdate} onDelete={onDelete} />
+      <OutdatedComments {...commentProps} outdated={placed.outdated} draftOutdated={draftKey === null} />
       <Diff
         viewType={viewType}
         diffType={file.type}
@@ -219,30 +227,71 @@ function TextDiff({ diff, viewType, path, view, comments, onAdd, onUpdate, onDel
   );
 }
 
-/** 지금 diff에 맞는 줄이 없는 코멘트. 단 줄의 내용(snippet)과 함께 diff 위에 보인다 */
+type DraftProps = Pick<PatchViewProps, 'drafts' | 'onAdd' | 'path' | 'view'>;
+
+/** 새 코멘트 입력. 본문은 `drafts`에 있어서 다시 mount되어도 남는다 */
+function DraftInput({ drafts, onAdd, path, view }: DraftProps) {
+  const { draft, change, close } = drafts;
+  if (!draft) return null;
+  const { anchor } = draft;
+  return (
+    <CommentInput
+      body={draft.body}
+      focusId="draft"
+      focused={drafts.focused}
+      onChange={change}
+      onSave={async (body) => {
+        await onAdd({ path, side: anchor.side, line: anchor.line, view, snippet: anchor.snippet, body });
+        close();
+      }}
+      onCancel={close}
+    />
+  );
+}
+
+/** 줄 내용과 함께 보이는 위치 표시 (`삭제된 줄 3: ...`) */
+function LineLabel({ side, line, snippet }: Anchor) {
+  return (
+    <p className="mb-1 truncate font-mono text-xs text-gray-500" title={snippet}>
+      {side === 'old' ? '삭제된 줄 ' : ''}
+      {line}: {snippet}
+    </p>
+  );
+}
+
+/**
+ * 지금 diff에 맞는 줄이 없는 코멘트. 단 줄의 내용(snippet)과 함께 diff 위에 보인다.
+ * `draftOutdated`면 쓰던 입력도 여기에 둔다 (그 줄이 바뀌었거나 사라졌을 때)
+ */
 function OutdatedComments({
   outdated,
-  onUpdate,
-  onDelete,
-}: {
+  draftOutdated,
+  ...props
+}: DraftProps & {
   outdated: Comment[];
+  draftOutdated: boolean;
   onUpdate: OnUpdateComment;
   onDelete: OnDeleteComment;
 }) {
-  if (outdated.length === 0) return null;
+  const draft = draftOutdated ? props.drafts.draft : null;
+  const count = outdated.length + (draft ? 1 : 0);
+  if (count === 0) return null;
   return (
     <details open className="border-b border-gray-200 bg-gray-50 px-3 py-2 text-sm">
-      <summary className="cursor-pointer text-xs text-gray-600">위치가 바뀐 코멘트 {outdated.length}개</summary>
+      <summary className="cursor-pointer text-xs text-gray-600">위치가 바뀐 코멘트 {count}개</summary>
       <ul className="mt-2 space-y-3">
         {outdated.map((c) => (
           <li key={c.id}>
-            <p className="mb-1 truncate font-mono text-xs text-gray-500" title={c.snippet}>
-              {c.side === 'old' ? '삭제된 줄 ' : ''}
-              {c.line}: {c.snippet}
-            </p>
-            <SavedComment comment={c} onUpdate={onUpdate} onDelete={onDelete} />
+            <LineLabel {...c} />
+            <SavedComment comment={c} onUpdate={props.onUpdate} onDelete={props.onDelete} drafts={props.drafts} />
           </li>
         ))}
+        {draft && (
+          <li>
+            <LineLabel {...draft.anchor} />
+            <DraftInput {...props} />
+          </li>
+        )}
       </ul>
     </details>
   );
