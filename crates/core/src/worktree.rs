@@ -187,12 +187,10 @@ impl Worktree {
         let (files, list_ms) = compute_list(&git, profile, &mb, &[])?;
         let id = layout.root.to_string_lossy().into_owned();
         let branch_key = current_branch(&git).unwrap_or_default();
-        // 봤음 상태를 읽지 못해도 diff는 보여 준다. 체크가 없는 것으로 본다
-        let rows = viewed.load(&id, &branch_key).unwrap_or_else(|e| {
-            eprintln!("[wtboard] {id}: 봤음 상태를 읽을 수 없음: {e}");
-            HashMap::new()
-        });
-        let wt = Self {
+        let rows = load_rows(&viewed, &id, &branch_key);
+        // 앱이 꺼진 사이 바뀐 체크 파일이 여기서 다시 바뀜으로 잡힌다
+        let hashes = viewed_hashes(&git, &mb, &rows, files.values())?;
+        Ok(Arc::new(Self {
             id,
             git,
             layout,
@@ -200,16 +198,9 @@ impl Worktree {
             configured_base,
             gh,
             viewed,
-            state: Mutex::new(State { base, merge_base: mb, files, hashes: HashMap::new(), branch_key, viewed: rows }),
+            state: Mutex::new(State { base, merge_base: mb, files, hashes, branch_key, viewed: rows }),
             meta: Mutex::new(Meta { list_ms, ..Default::default() }),
-        };
-        // 앱이 꺼진 사이 바뀐 체크 파일이 여기서 다시 바뀜으로 잡힌다
-        {
-            let mut st = wt.state.lock().unwrap();
-            let hashes = wt.viewed_hashes(&st)?;
-            st.hashes.extend(hashes);
-        }
-        Ok(Arc::new(wt))
+        }))
     }
 
     pub fn profile(&self) -> Profile {
@@ -370,23 +361,24 @@ impl Worktree {
         Ok(ev)
     }
 
+    /// base·merge-base·브랜치가 그대로면 목록만 다시 계산한다. 하나라도 바뀌면 state를 통째로 바꾸고 Base event.
+    /// 브랜치가 바뀌면 그 브랜치의 봤음 row를 읽는다 (merge-base가 같은 브랜치로 옮겨도 체크가 따라오지 않게)
     fn refresh_base(&self) -> Result<Option<WorktreeChanged>, WorktreeError> {
+        let branch_key = current_branch(&self.git).unwrap_or_default();
         let pr = self.meta.lock().unwrap().pr_base.clone();
         let base = resolve_base(&self.git, self.configured_base.as_deref(), pr.as_deref())?;
         let mb = merge_base(&self.git, &base.name)?;
-        let unchanged = {
-            let st = self.state.lock().unwrap();
-            st.base == base && st.merge_base == mb
-        };
-        if unchanged {
+        let mut st = self.state.lock().unwrap();
+        let same_branch = st.branch_key == branch_key;
+        if same_branch && st.base == base && st.merge_base == mb {
+            drop(st);
             return self.refresh_list();
         }
+        let loaded = (!same_branch).then(|| load_rows(&self.viewed, &self.id, &branch_key));
         let files = self.list_all(&mb)?;
-        let mut st = self.state.lock().unwrap();
-        st.base = base;
-        st.merge_base = mb;
-        st.files = files;
-        st.hashes.clear();
+        let hashes = viewed_hashes(&self.git, &mb, loaded.as_ref().unwrap_or(&st.viewed), files.values())?;
+        let viewed = loaded.unwrap_or_else(|| std::mem::take(&mut st.viewed));
+        *st = State { base, merge_base: mb, files, hashes, branch_key, viewed };
         Ok(Some(self.event(ChangeScope::Base, Vec::new())))
     }
 
@@ -405,9 +397,13 @@ impl Worktree {
         if changed.is_empty() {
             return Ok(None);
         }
+        // 바뀐 파일 중 체크한 파일은 hash를 다시 채운다 (불변식). 같은 event로 화면도 다시 가져간다
+        let changed_files = changed.iter().filter_map(|p| fresh.get(p));
+        let rehashed = viewed_hashes(&self.git, &st.merge_base, &st.viewed, changed_files)?;
         for p in &changed {
             st.hashes.remove(p);
         }
+        st.hashes.extend(rehashed);
         st.files = fresh;
         Ok(Some(self.event(ChangeScope::List, changed)))
     }
@@ -475,16 +471,6 @@ impl Worktree {
         Ok(files)
     }
 
-    /// row가 있고 목록에 있는데 hash가 없는 파일의 현재 hash. 결과는 호출한 쪽이 `hashes`에 넣는다
-    fn viewed_hashes(&self, st: &State) -> Result<Vec<(String, String)>, WorktreeError> {
-        st.viewed
-            .keys()
-            .filter(|p| !st.hashes.contains_key(*p))
-            .filter_map(|p| st.files.get(p))
-            .map(|f| Ok((f.path.clone(), file_patch(&self.git, &st.merge_base, f)?.hash)))
-            .collect()
-    }
-
     fn event(&self, scope: ChangeScope, changed_paths: Vec<String>) -> WorktreeChanged {
         WorktreeChanged { worktree_id: self.id.clone(), changed_paths, scope }
     }
@@ -506,6 +492,28 @@ fn compute_list(
         f.collapsed = profile.collapses(&f.path) || generated.contains(&f.path);
     }
     Ok((to_map(files), started.elapsed().as_millis() as u64))
+}
+
+/// `branch_key`의 봤음 row. 읽지 못해도 diff는 보여 준다. 체크가 없는 것으로 본다
+fn load_rows(store: &ViewedStore, id: &str, branch_key: &str) -> HashMap<String, String> {
+    store.load(id, branch_key).unwrap_or_else(|e| {
+        eprintln!("[wtboard] {id}: 봤음 상태를 읽을 수 없음: {e}");
+        HashMap::new()
+    })
+}
+
+/// `files` 중 봤음 row가 있는 파일의 현재 hash. 결과는 호출한 쪽이 `hashes`에 넣는다
+fn viewed_hashes<'a>(
+    git: &Git,
+    merge_base: &str,
+    rows: &HashMap<String, String>,
+    files: impl IntoIterator<Item = &'a ChangedFile>,
+) -> Result<HashMap<String, String>, WorktreeError> {
+    files
+        .into_iter()
+        .filter(|f| rows.contains_key(&f.path))
+        .map(|f| Ok((f.path.clone(), file_patch(git, merge_base, f)?.hash)))
+        .collect()
 }
 
 /// 현재 브랜치 이름. detached HEAD면 `None`

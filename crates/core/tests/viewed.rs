@@ -156,3 +156,139 @@ fn change_while_closed_is_changed_on_open() {
     let wt = open_with(&repo, &file_store(dir.path()));
     assert_eq!(state(&wt, "src/a.py"), ViewedState::Changed);
 }
+
+fn has(wt: &Worktree, p: &str) -> bool {
+    wt.files().iter().any(|f| f.path == p)
+}
+
+/// `.gitignore`가 바뀌어 목록 전체를 다시 계산해도 체크한 파일의 변경을 잡는다
+#[test]
+fn list_refresh_keeps_checked_file_tracked() {
+    let repo = feat_repo();
+    repo.write("src/a.py", "a = 2\n");
+    let wt = open(&repo);
+    wt.set_viewed("src/a.py", true, None).unwrap();
+    repo.write(".gitignore", "*.log\n");
+    repo.write("src/a.py", "a = 3\n");
+    let targets = [Target::File(".gitignore".into()), Target::File("src/a.py".into())];
+    let ev = wt.handle(&targets).unwrap().expect("should emit");
+    assert!(ev.changed_paths.contains(&"src/a.py".to_string()));
+    assert_eq!(state(&wt, "src/a.py"), ViewedState::Changed);
+}
+
+/// 목록 재계산이 체크한 파일의 hash를 다시 채우므로, 체크한 diff로 되돌리면 봤음으로 돌아온다
+#[test]
+fn list_refresh_then_revert_is_viewed_again() {
+    let repo = feat_repo();
+    repo.write("src/a.py", "a = 2\n");
+    let wt = open(&repo);
+    wt.set_viewed("src/a.py", true, None).unwrap();
+    repo.write("src/a.py", "a = 3\nx = 1\n"); // +- 수가 바뀌어 목록 재계산이 잡는다
+    wt.handle(&[Target::List]).unwrap();
+    assert_eq!(state(&wt, "src/a.py"), ViewedState::Changed);
+
+    repo.write("src/a.py", "a = 2\n");
+    wt.handle(&[Target::List]).unwrap();
+    assert_eq!(state(&wt, "src/a.py"), ViewedState::Viewed);
+}
+
+#[test]
+fn too_many_event_paths_still_catch_checked_file() {
+    let repo = feat_repo();
+    repo.write("src/a.py", "a = 2\n");
+    let wt = open(&repo);
+    wt.set_viewed("src/a.py", true, None).unwrap();
+    repo.write("src/a.py", "a = 3\n");
+    let mut targets = vec![Target::File("src/a.py".into())];
+    targets.extend((0..=200).map(|i| Target::File(format!("x/{i}.py"))));
+    let ev = wt.handle(&targets).unwrap().expect("should emit");
+    assert!(ev.changed_paths.contains(&"src/a.py".to_string()));
+    assert_eq!(state(&wt, "src/a.py"), ViewedState::Changed);
+}
+
+/// merge-base가 바뀌어도 diff가 그대로면 봤음이 유지된다
+#[test]
+fn base_refresh_recomputes_checked_hashes() {
+    let repo = feat_repo();
+    repo.write("src/a.py", "a = 2\n");
+    let wt = open(&repo);
+    wt.set_viewed("src/a.py", true, None).unwrap();
+    repo.git(&["checkout", "-q", "main"]);
+    repo.write("src/c.py", "c = 1\n");
+    repo.git(&["add", "src/c.py"]);
+    repo.git(&["commit", "-q", "-m", "c"]);
+    repo.git(&["checkout", "-q", "feat"]);
+    repo.git(&["merge", "-q", "main"]);
+
+    let ev = wt.handle(&[Target::Base]).unwrap().expect("should emit");
+    assert_eq!(ev.scope, ChangeScope::Base);
+    assert_eq!(state(&wt, "src/a.py"), ViewedState::Viewed);
+}
+
+#[test]
+fn branch_switch_restores_each_branch_checks() {
+    let repo = feat_repo();
+    repo.write("src/a.py", "a = 2\n");
+    repo.commit_all("feat a");
+    let wt = open(&repo);
+    wt.set_viewed("src/a.py", true, None).unwrap();
+
+    repo.git(&["checkout", "-q", "main"]);
+    repo.git(&["checkout", "-q", "-b", "feat2"]);
+    repo.write("src/b.py", "b = 2\n");
+    repo.commit_all("feat2 b");
+    wt.handle(&[Target::Base]).unwrap();
+    assert!(!has(&wt, "src/a.py"));
+    assert_eq!(state(&wt, "src/b.py"), ViewedState::Unviewed);
+    wt.set_viewed("src/b.py", true, None).unwrap();
+
+    repo.git(&["checkout", "-q", "feat"]);
+    wt.handle(&[Target::Base]).unwrap();
+    assert_eq!(state(&wt, "src/a.py"), ViewedState::Viewed);
+
+    repo.git(&["checkout", "-q", "feat2"]);
+    wt.handle(&[Target::Base]).unwrap();
+    assert_eq!(state(&wt, "src/b.py"), ViewedState::Viewed);
+}
+
+/// 작업 트리와 merge-base가 그대로여도 브랜치가 바뀌면 그 브랜치의 row로 바꾼다
+#[test]
+fn branch_switch_with_same_merge_base_reloads_rows() {
+    let repo = feat_repo();
+    repo.write("src/a.py", "a = 2\n");
+    let wt = open(&repo);
+    wt.set_viewed("src/a.py", true, None).unwrap();
+    repo.git(&["checkout", "-q", "-b", "feat2"]);
+
+    let ev = wt.handle(&[Target::Base]).unwrap().expect("should emit");
+    assert_eq!(ev.scope, ChangeScope::Base);
+    assert_eq!(state(&wt, "src/a.py"), ViewedState::Unviewed);
+}
+
+#[test]
+fn revert_then_redo_restores_viewed() {
+    let repo = feat_repo();
+    repo.write("src/a.py", "a = 2\n");
+    let wt = open(&repo);
+    wt.set_viewed("src/a.py", true, None).unwrap();
+    repo.write("src/a.py", "a = 1\n");
+    wt.handle(&[Target::File("src/a.py".into())]).unwrap();
+    assert!(!has(&wt, "src/a.py"));
+
+    repo.write("src/a.py", "a = 2\n");
+    wt.handle(&[Target::File("src/a.py".into())]).unwrap();
+    assert_eq!(state(&wt, "src/a.py"), ViewedState::Viewed);
+}
+
+#[test]
+fn viewed_deleted_file_stays_viewed() {
+    let repo = feat_repo();
+    repo.remove("src/b.py");
+    let wt = open(&repo);
+    wt.set_viewed("src/b.py", true, None).unwrap();
+    repo.write("src/a.py", "a = 2\n");
+    wt.handle(&[Target::File("src/a.py".into())]).unwrap();
+    assert_eq!(state(&wt, "src/b.py"), ViewedState::Viewed);
+    wt.handle(&[Target::List]).unwrap();
+    assert_eq!(state(&wt, "src/b.py"), ViewedState::Viewed);
+}
