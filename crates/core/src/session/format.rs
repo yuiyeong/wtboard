@@ -35,6 +35,11 @@ const BASH_DIR: &str = "bash";
 const DIR_MODE: u32 = 0o700;
 const FILE_MODE: u32 = 0o600;
 
+/// 세션 폴더들을 담는 폴더 `<data dir>/sessions`
+pub fn sessions_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("sessions")
+}
+
 /// `[A-Za-z0-9_-]+`만 허용한다. 폴더 이름으로 쓰므로 `/`, `..`가 들어오면 세션 폴더 밖에 쓰게 된다
 pub fn is_valid_session_id(id: &str) -> bool {
     !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
@@ -179,7 +184,7 @@ impl SessionDir {
     pub fn open(data_dir: &Path, session_id: &str) -> Option<Self> {
         is_valid_session_id(session_id).then(|| Self {
             id: session_id.to_string(),
-            root: data_dir.join("sessions").join(session_id),
+            root: sessions_dir(data_dir).join(session_id),
         })
     }
 
@@ -429,7 +434,7 @@ fn snapshot_file(path: &Path, dest: &Path) -> io::Result<Option<TurnState>> {
 }
 
 /// 없는 폴더를 0700으로 만든다 (중간 폴더 포함). 이미 있는 폴더의 권한은 건드리지 않는다
-fn create_private_dir(dir: &Path) -> io::Result<()> {
+pub(crate) fn create_private_dir(dir: &Path) -> io::Result<()> {
     fs::DirBuilder::new().recursive(true).mode(DIR_MODE).create(dir)
 }
 

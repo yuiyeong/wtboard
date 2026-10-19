@@ -90,6 +90,8 @@ pub struct WorktreeSummary {
     /// 마지막 전체 목록 계산 시간. 느릴 때만 있다 (fsmonitor 안내용)
     pub slow_list_ms: Option<u64>,
     pub fsmonitor: bool,
+    /// 활성 Claude Code 세션이 있음. 세션 기록을 아는 앱이 채운다 (core는 항상 false)
+    pub active_session: bool,
     /// 열지 못한 이유. 있으면 나머지 필드는 기본값이다
     pub error: Option<String>,
 }
@@ -109,6 +111,7 @@ impl WorktreeSummary {
             last_changed_at: None,
             slow_list_ms: None,
             fsmonitor: false,
+            active_session: false,
             error: Some(error),
         }
     }
@@ -287,6 +290,7 @@ impl Worktree {
             last_changed_at,
             slow_list_ms: (list_ms > slow_ms).then_some(list_ms),
             fsmonitor,
+            active_session: false,
             error: None,
         }
     }
@@ -568,7 +572,8 @@ fn affects_other_files(path: &str) -> bool {
     matches!(name, ".gitattributes" | ".gitignore")
 }
 
-pub(crate) fn now_ms() -> u64 {
+/// 현재 시각 (Unix ms)
+pub fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 

@@ -4,6 +4,6 @@ pub mod list;
 pub mod view;
 
 pub use format::{
-    is_valid_session_id, valid_abs_path, Baseline, BaselineContent, BaselineKind, Event,
+    is_valid_session_id, sessions_dir, valid_abs_path, Baseline, BaselineContent, BaselineKind, Event,
     EventKind, Meta, SessionDir, Snapshot, TurnIndex,
 };

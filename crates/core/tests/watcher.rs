@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 use common::{clone_on_feat_with_develop, gh_stub, TestRepo};
 use wtboard_core::git::base::BaseSource;
 use wtboard_core::store::viewed::ViewedStore;
-use wtboard_core::watch::{spawn_watcher, spawn_watcher_with, WatchHandle};
+use wtboard_core::session::{Event, EventKind, SessionDir};
+use wtboard_core::watch::{spawn_sessions_watcher, spawn_watcher, spawn_watcher_with, WatchHandle};
 use wtboard_core::worktree::{ChangeScope, ViewedState, Worktree, WorktreeChanged};
 
 fn start(path: &Path) -> (WatchHandle, mpsc::Receiver<WorktreeChanged>) {
@@ -116,4 +117,61 @@ fn edit_to_checked_file_flips_to_changed_within_one_second() {
     assert!(elapsed < Duration::from_secs(1), "took {elapsed:?}");
     let entry = wt.entries().into_iter().find(|e| e.file.path == "README.md").expect("README.md in list");
     assert_eq!(entry.viewed, ViewedState::Changed);
+}
+
+#[test]
+fn session_write_reaches_callback_within_one_second() {
+    let data = tempfile::tempdir().unwrap();
+    let sessions = data.path().join("sessions");
+    let (tx, rx) = mpsc::channel();
+    let _h = spawn_sessions_watcher(&sessions, Arc::new(move |ids| {
+        let _ = tx.send(ids);
+    }))
+    .unwrap();
+    // 없던 폴더는 0700으로 만든다 (세션 기록에는 사용자 파일의 원본이 들어간다)
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(std::fs::metadata(&sessions).unwrap().permissions().mode() & 0o777, 0o700);
+    std::thread::sleep(Duration::from_millis(300)); // FSEvents stream 시작 대기
+
+    let started = Instant::now();
+    let dir = SessionDir::open(data.path(), "s1").unwrap();
+    let ev = Event { t: 1, turn: 1, kind: EventKind::Edit, tool: None, paths: vec!["/tmp/a.txt".into()], agent_id: None };
+    dir.append_event(&ev).unwrap();
+    dir.append_event(&ev).unwrap();
+    let ids = rx.recv_timeout(Duration::from_secs(3)).expect("no callback");
+    let elapsed = started.elapsed();
+
+    assert_eq!(ids, vec!["s1".to_string()]);
+    assert!(elapsed < Duration::from_secs(1), "took {elapsed:?}");
+}
+
+#[test]
+fn writes_to_two_sessions_arrive_together_without_duplicates() {
+    let data = tempfile::tempdir().unwrap();
+    let (tx, rx) = mpsc::channel();
+    let _h = spawn_sessions_watcher(&data.path().join("sessions"), Arc::new(move |ids| {
+        let _ = tx.send(ids);
+    }))
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(300)); // FSEvents stream 시작 대기
+
+    let ev = Event { t: 1, turn: 1, kind: EventKind::Edit, tool: None, paths: vec!["/tmp/a.txt".into()], agent_id: None };
+    for id in ["s2", "s1", "s2"] {
+        SessionDir::open(data.path(), id).unwrap().append_event(&ev).unwrap();
+    }
+    let mut calls = vec![rx.recv_timeout(Duration::from_secs(3)).expect("no callback")];
+    while let Ok(more) = rx.recv_timeout(Duration::from_millis(600)) {
+        calls.push(more);
+    }
+    let mut seen: Vec<String> = Vec::new();
+    for ids in calls {
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), ids.len(), "duplicate ids in one call: {ids:?}");
+        seen.extend(ids);
+    }
+    seen.sort();
+    seen.dedup();
+    assert_eq!(seen, vec!["s1".to_string(), "s2".to_string()]);
 }

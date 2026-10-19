@@ -149,6 +149,12 @@ impl Repo {
             .map(|(wt, _)| wt.clone())
     }
 
+    /// 열린 worktree의 root (= worktree id)
+    pub fn roots(&self) -> Vec<PathBuf> {
+        let opened = self.worktrees.lock().unwrap();
+        opened.iter().filter_map(|o| o.result.as_ref().ok()).map(|(wt, _)| wt.layout().root.clone()).collect()
+    }
+
     fn open_worktree(self: &Arc<Self>, entry: &WorktreeEntry) -> Opened {
         let opened = Worktree::open_with(&entry.path, self.opts.base.clone(), self.opts.gh.clone(), self.opts.viewed.clone());
         let result = opened.map_err(|e| e.to_string()).and_then(|wt| {

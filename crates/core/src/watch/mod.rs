@@ -1,10 +1,12 @@
 mod repo_watcher;
+mod sessions_watcher;
 mod watcher;
 
 /// FS event를 묶는 시간
 const DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(300);
 
 pub use repo_watcher::{spawn_repo_watcher, RediscoverFn, RepoWatchHandle};
+pub use sessions_watcher::{spawn_sessions_watcher, SessionsChangedFn, SessionsWatchHandle};
 pub use watcher::{spawn_watcher, spawn_watcher_with, EmitFn, GoneFn, WatchHandle};
 
 use std::path::{Component, Path, PathBuf};

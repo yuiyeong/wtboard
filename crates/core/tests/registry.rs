@@ -85,3 +85,17 @@ fn worktree_lookup_spans_repos() {
     }
     assert!(reg.worktree("/nope").is_none());
 }
+
+#[test]
+fn roots_are_the_opened_worktree_roots() {
+    let (a, b) = (TestRepo::new(), TestRepo::new());
+    let wt = linked(&a, "wt", "feat");
+    let reg = registry(&[(a.path(), Some("main")), (b.path(), Some("main"))]);
+    let mut ids: Vec<String> = reg.repos().iter().flat_map(|r| r.worktrees.iter().map(|w| w.id.clone())).collect();
+    let mut roots: Vec<String> = reg.roots().iter().map(|p| p.to_string_lossy().into_owned()).collect();
+    ids.sort();
+    roots.sort();
+    assert_eq!(roots, ids);
+    assert_eq!(roots.len(), 3);
+    assert!(roots.contains(&wt.canonicalize().unwrap().to_string_lossy().into_owned()));
+}

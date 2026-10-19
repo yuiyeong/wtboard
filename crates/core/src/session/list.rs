@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use super::format::mtime_ms;
+use super::format::{mtime_ms, sessions_dir};
 use super::{Event, EventKind, Meta, SessionDir};
 use crate::paths::{canonical, nfc};
 
@@ -114,7 +114,7 @@ pub fn cleanup(data_dir: &Path, keep_days: u64, now: u64) -> usize {
 
 /// `<data dir>/sessions/` 아래의 세션 폴더. 폴더가 아니거나 (symlink 포함) 이름이 session id가 아니면 뺀다
 fn session_dirs(data_dir: &Path) -> Vec<SessionDir> {
-    let Ok(entries) = fs::read_dir(data_dir.join("sessions")) else { return Vec::new() };
+    let Ok(entries) = fs::read_dir(sessions_dir(data_dir)) else { return Vec::new() };
     entries
         .flatten()
         .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))

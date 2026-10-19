@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use serde::Serialize;
@@ -6,14 +7,20 @@ use wtboard_core::domain::FilePatch;
 use wtboard_core::gh::Gh;
 use wtboard_core::registry::{EntryError, Registry};
 use wtboard_core::repo::{RepoSummary, Sink};
+use wtboard_core::session::list::{active_roots, cleanup, sessions_for, worktrees_of, SessionSummary};
+use wtboard_core::session::view::{self, SessionView};
+use wtboard_core::session::{sessions_dir, SessionDir};
 use wtboard_core::store::config::Config;
 use wtboard_core::store::data_dir;
 use wtboard_core::store::viewed::ViewedStore;
-use wtboard_core::worktree::{FileEntry, Worktree, WorktreeChanged};
+use wtboard_core::watch::{spawn_sessions_watcher, SessionsWatchHandle};
+use wtboard_core::worktree::{now_ms, FileEntry, Worktree, WorktreeChanged};
 
 /// Registry는 background thread에서 열고 끝나면 채운다. command는 채워질 때까지 기다린다
 struct AppState {
     registry: OnceLock<Result<Registry, String>>,
+    /// 세션 기록 감시. registry를 열 때 시작한다 (바뀐 세션의 worktree를 정하려면 root 목록이 필요하다)
+    sessions_watch: OnceLock<SessionsWatchHandle>,
 }
 
 #[derive(Serialize)]
@@ -23,25 +30,73 @@ struct ReposResponse {
     errors: Vec<EntryError>,
 }
 
+/// `session-updated` event. worktree는 그 세션들이 속한 것
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionUpdated {
+    session_ids: Vec<String>,
+    worktree_ids: Vec<String>,
+}
+
 #[tauri::command]
 async fn list_repos(app: AppHandle) -> Result<ReposResponse, String> {
     blocking(move || {
         let reg = registry(&app)?;
-        Ok(ReposResponse { repos: reg.repos(), errors: reg.errors().to_vec() })
+        let mut repos = reg.repos();
+        let active = active_roots(&data_dir(), &reg.roots(), now_ms());
+        for w in repos.iter_mut().flat_map(|r| &mut r.worktrees) {
+            w.active_session = active.contains(Path::new(&w.id));
+        }
+        Ok(ReposResponse { repos, errors: reg.errors().to_vec() })
     })
     .await
 }
 
 #[tauri::command]
-async fn list_files(app: AppHandle, worktree_id: String, view: String) -> Result<Vec<FileEntry>, String> {
-    ensure_branch_view(&view)?;
-    blocking(move || Ok(worktree(&app, &worktree_id)?.entries())).await
+async fn list_sessions(app: AppHandle, worktree_id: String) -> Result<Vec<SessionSummary>, String> {
+    blocking(move || {
+        let wt = worktree(&app, &worktree_id)?;
+        Ok(sessions_for(&data_dir(), &wt.layout().root, &registry(&app)?.roots(), now_ms()))
+    })
+    .await
 }
 
 #[tauri::command]
-async fn get_patch(app: AppHandle, worktree_id: String, view: String, path: String) -> Result<FilePatch, String> {
-    ensure_branch_view(&view)?;
-    blocking(move || worktree(&app, &worktree_id)?.patch(&path).map_err(|e| e.to_string())).await
+async fn list_files(
+    app: AppHandle,
+    worktree_id: String,
+    view: String,
+    session_id: Option<String>,
+) -> Result<Vec<FileEntry>, String> {
+    let view = parse_view(&view, session_id)?;
+    blocking(move || {
+        let wt = worktree(&app, &worktree_id)?;
+        match view {
+            View::Branch => Ok(wt.entries()),
+            View::Session(dir, v) => view::changes(&dir, v, &wt, &registry(&app)?.roots()).map_err(|e| e.to_string()),
+        }
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_patch(
+    app: AppHandle,
+    worktree_id: String,
+    view: String,
+    path: String,
+    session_id: Option<String>,
+) -> Result<FilePatch, String> {
+    let view = parse_view(&view, session_id)?;
+    blocking(move || {
+        let wt = worktree(&app, &worktree_id)?;
+        match view {
+            View::Branch => wt.patch(&path),
+            View::Session(dir, v) => view::patch(&dir, v, &wt, &path, &registry(&app)?.roots()),
+        }
+        .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// 봤음은 view와 무관하다. hash는 화면이 보고 있는 diff의 hash다 (없으면 현재 diff)
@@ -70,18 +125,59 @@ fn worktree(app: &AppHandle, id: &str) -> Result<Arc<Worktree>, String> {
     registry(app)?.worktree(id).ok_or_else(|| format!("알 수 없는 worktree: {id}"))
 }
 
-fn ensure_branch_view(view: &str) -> Result<(), String> {
-    if view == "branch" {
-        Ok(())
-    } else {
-        Err(format!("아직 지원하지 않는 view: {view}"))
-    }
+enum View {
+    /// 브랜치 전체
+    Branch,
+    /// 이번 세션, 마지막 응답
+    Session(SessionDir, SessionView),
+}
+
+/// `session`·`turn`은 session id가 있어야 한다. id는 화면에서 온 값이라 형식을 확인한다 (폴더 이름으로 쓴다)
+fn parse_view(view: &str, session_id: Option<String>) -> Result<View, String> {
+    let kind = match view {
+        "branch" => return Ok(View::Branch),
+        "session" => SessionView::Session,
+        "turn" => SessionView::Turn,
+        _ => return Err(format!("알 수 없는 view: {view}")),
+    };
+    let id = session_id.ok_or_else(|| format!("{view} view에는 session id가 필요합니다"))?;
+    let dir = SessionDir::open(&data_dir(), &id).ok_or_else(|| format!("잘못된 session id: {id}"))?;
+    Ok(View::Session(dir, kind))
+}
+
+/// 세션 폴더가 바뀌면 그 세션이 속한 worktree를 구해 `session-updated`를 보낸다. 어느 worktree에도 속하지 않으면 보내지 않는다
+fn watch_sessions(handle: &AppHandle, data: PathBuf) -> Result<SessionsWatchHandle, String> {
+    let app = handle.clone();
+    spawn_sessions_watcher(
+        &sessions_dir(&data),
+        Arc::new(move |session_ids: Vec<String>| {
+            // registry를 연 직후에 시작하므로 곧 채워진다
+            let Ok(reg) = registry(&app) else { return };
+            let roots = reg.roots();
+            let mut worktree_ids: Vec<String> = Vec::new();
+            for dir in session_ids.iter().filter_map(|id| SessionDir::open(&data, id)) {
+                for root in worktrees_of(&dir, &roots) {
+                    let id = root.to_string_lossy().into_owned();
+                    if !worktree_ids.contains(&id) {
+                        worktree_ids.push(id);
+                    }
+                }
+            }
+            if !worktree_ids.is_empty() {
+                let _ = app.emit("session-updated", SessionUpdated { session_ids, worktree_ids });
+            }
+        }),
+    )
+    .map_err(|e| format!("세션 기록을 감시할 수 없음: {e}"))
 }
 
 fn open_registry(handle: &AppHandle) -> Result<Registry, String> {
     let path = Config::default_path();
     let hint = format!("{} 에 다음을 추가하세요:\n\n[[repo]]\npath = \"~/dev/my-repo\"", path.display());
     let config = Config::load(&path).map_err(|e| format!("{e}\n\n{hint}"))?;
+    // 오래된 세션 기록을 지운다. 감시를 시작하기 전에 해서 지우는 것이 event로 오지 않게 한다
+    let data = data_dir();
+    cleanup(&data, config.sessions.keep_days, now_ms());
     if config.repos.is_empty() {
         return Err(format!("등록된 레포가 없습니다.\n\n{hint}"));
     }
@@ -95,7 +191,7 @@ fn open_registry(handle: &AppHandle) -> Result<Registry, String> {
         }),
     };
     // 봤음 상태는 data dir(config 파일이 있는 폴더)에 둔다. 열 수 없으면 이번 실행만 메모리에 둔다
-    let state_path = data_dir().join("state.sqlite");
+    let state_path = data.join("state.sqlite");
     let (viewed, warning) = match ViewedStore::open(&state_path) {
         Ok(store) => (store, None),
         Err(e) => (
@@ -110,13 +206,20 @@ fn open_registry(handle: &AppHandle) -> Result<Registry, String> {
     if let Some(w) = warning {
         reg.warn(w);
     }
+    let sessions = sessions_dir(&data);
+    match watch_sessions(handle, data) {
+        Ok(h) => {
+            let _ = handle.state::<AppState>().sessions_watch.set(h);
+        }
+        Err(e) => reg.warn(EntryError { path: sessions.display().to_string(), message: e }),
+    }
     Ok(reg)
 }
 
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
-            app.manage(AppState { registry: OnceLock::new() });
+            app.manage(AppState { registry: OnceLock::new(), sessions_watch: OnceLock::new() });
             let handle = app.handle().clone();
             // 레포가 많거나 크면 수 초 걸린다. 창을 막지 않는다
             std::thread::spawn(move || {
@@ -125,7 +228,23 @@ fn main() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![list_repos, list_files, get_patch, set_viewed])
+        .invoke_handler(tauri::generate_handler![list_repos, list_sessions, list_files, get_patch, set_viewed])
         .run(tauri::generate_context!())
         .expect("wtboard 실행 실패");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_views_need_a_valid_session_id() {
+        assert!(matches!(parse_view("branch", None), Ok(View::Branch)));
+        assert!(matches!(parse_view("turn", Some("s-1_A".into())), Ok(View::Session(_, SessionView::Turn))));
+        assert!(matches!(parse_view("session", Some("s1".into())), Ok(View::Session(_, SessionView::Session))));
+        assert!(parse_view("session", None).is_err());
+        assert!(parse_view("turn", Some("../x".into())).is_err());
+        assert!(parse_view("turn", Some(String::new())).is_err());
+        assert!(parse_view("commit", None).is_err());
+    }
 }

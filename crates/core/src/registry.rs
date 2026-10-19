@@ -105,4 +105,9 @@ impl Registry {
     pub fn worktree(&self, id: &str) -> Option<Arc<Worktree>> {
         self.repos.iter().find_map(|r| r.worktree(id))
     }
+
+    /// 열린 모든 worktree의 root. 세션 경로를 가장 깊은 worktree에 귀속시키는 데 쓴다
+    pub fn roots(&self) -> Vec<PathBuf> {
+        self.repos.iter().flat_map(|r| r.roots()).collect()
+    }
 }
