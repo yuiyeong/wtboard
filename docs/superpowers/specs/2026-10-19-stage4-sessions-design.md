@@ -74,7 +74,7 @@
 | PostToolUse, PostToolUseFailure `Edit\|Write\|NotebookEdit` | `post-edit` | `edit` event (turn = meta의 현재 turn) |
 | PreToolUse `Bash` | `pre-bash` | `cwd`의 레포에서 HEAD와 `git status --porcelain=v2 -z --untracked-files=all` 결과, 변경 파일들의 (mtime, size)를 `bash/<tool_use_id>.json`에 저장. git 레포가 아니면 아무것도 안 한다 |
 | PostToolUse, PostToolUseFailure `Bash` | `post-bash` | 스냅샷과 지금 status를 비교해 바뀐 파일을 찾는다 (아래). 각 파일 baseline을 정하고 `bash` event. 스냅샷 파일을 지운다 |
-| Stop, StopFailure | `turn-end` | 열린 turn이 있으면 닫는다: 이 turn의 event에 나온 경로를 `turns/<n>/`에 복사(없으면 `deleted.txt`), `turn_end` event, `turn_open = false` |
+| Stop, StopFailure | `turn-end` | 열린 turn이 있으면 닫는다: 이 turn의 event에 나온 경로를 `turns/<n>/`에 복사(없으면 `index.jsonl`에 deleted), `turn_end` event, `turn_open = false` |
 | SessionEnd | `session-end` | 열린 turn을 닫고 `ended_at` 기록. SessionEnd timeout이 1.5초라 복사가 오래 걸리면 중간에 끊길 수 있다 (알려진 한계) |
 
 turn이 열리기 전(첫 prompt 전)의 edit/bash event는 turn 0으로 기록한다. 앱은 turn 0을 turn 1에 합친다 (내 판단).
