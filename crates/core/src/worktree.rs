@@ -374,10 +374,9 @@ impl Worktree {
             drop(st);
             return self.refresh_list();
         }
-        let loaded = (!same_branch).then(|| load_rows(&self.viewed, &self.id, &branch_key));
+        let viewed = if same_branch { st.viewed.clone() } else { load_rows(&self.viewed, &self.id, &branch_key) };
         let files = self.list_all(&mb)?;
-        let hashes = viewed_hashes(&self.git, &mb, loaded.as_ref().unwrap_or(&st.viewed), files.values())?;
-        let viewed = loaded.unwrap_or_else(|| std::mem::take(&mut st.viewed));
+        let hashes = viewed_hashes(&self.git, &mb, &viewed, files.values())?;
         *st = State { base, merge_base: mb, files, hashes, branch_key, viewed };
         Ok(Some(self.event(ChangeScope::Base, Vec::new())))
     }
