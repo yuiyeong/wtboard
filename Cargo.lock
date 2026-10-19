@@ -4579,6 +4579,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wtboard-hook"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "wtboard-core",
+]
+
+[[package]]
 name = "x11"
 version = "2.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
