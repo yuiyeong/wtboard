@@ -41,7 +41,7 @@ export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: 
   }, [files.data]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <header className="flex items-center gap-3 border-b border-gray-200 px-4 py-2 text-sm">
         <strong>{repo.name}</strong>
         <span className="font-mono">{worktreeLabel(worktree)}</span>
