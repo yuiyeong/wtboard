@@ -1,5 +1,5 @@
 import type { SessionSummary, View } from '../api';
-import { sessionLabel, turnLabel } from '../lib/sessions';
+import { sessionLabel, tabDisabled, turnLabel } from '../lib/sessions';
 
 const NO_SESSION = '이 worktree의 Claude Code 세션 기록이 없습니다';
 
@@ -16,7 +16,7 @@ interface Props {
 /** `브랜치 전체` / `이번 세션` (세션이 여러 개면 select) / `마지막 응답 #n` */
 export function ViewTabs({ view, sessions, session, onView, onSession }: Props) {
   const tab = (v: View, label: string) => {
-    const disabled = v !== 'branch' && !session;
+    const disabled = tabDisabled(v, session);
     return (
       <button
         onClick={() => onView(v)}

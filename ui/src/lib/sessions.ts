@@ -10,6 +10,11 @@ export function effectiveView(view: View, session: SessionSummary | null): View 
   return session ? view : 'branch';
 }
 
+/** 세션이 없으면 세션 탭 두 개 (`이번 세션`, `마지막 응답`)는 누를 수 없다 */
+export function tabDisabled(view: View, session: SessionSummary | null): boolean {
+  return view !== 'branch' && !session;
+}
+
 export const filesKey = (worktreeId: string, view: View, sessionId: string | null) =>
   ['files', worktreeId, view, sessionId ?? null] as const;
 

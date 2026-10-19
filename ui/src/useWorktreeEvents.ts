@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { useQueryClient } from '@tanstack/react-query';
 import type { SessionUpdated, WorktreeChanged } from './api';
-import { keysForSessionUpdated, keysToInvalidate } from './lib/events';
+import { filtersForSessionUpdated, keysToInvalidate } from './lib/events';
 
 /** worktree-changed·session-updated event가 오면 관련 query만 무효화한다. worktree 목록이 바뀌면 레포 목록을 다시 읽는다. */
 export function useWorktreeEvents() {
@@ -15,7 +15,7 @@ export function useWorktreeEvents() {
       queryClient.invalidateQueries({ queryKey: ['repos'] });
     });
     const unlistenSession = listen<SessionUpdated>('session-updated', ({ payload }) => {
-      for (const queryKey of keysForSessionUpdated(payload)) queryClient.invalidateQueries({ queryKey });
+      for (const filters of filtersForSessionUpdated(payload)) queryClient.invalidateQueries(filters);
     });
     return () => {
       unlistenChanged.then((off) => off());

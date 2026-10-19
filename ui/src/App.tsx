@@ -10,8 +10,9 @@ export function App() {
   useWorktreeEvents();
   const selection = useUiStore((s) => s.selection);
   const select = useUiStore((s) => s.select);
-  // 앱이 레포를 여는 동안 list_repos는 기다렸다가 답한다
-  const repos = useQuery({ queryKey: ['repos'], queryFn: listRepos });
+  // 앱이 레포를 여는 동안 list_repos는 기다렸다가 답한다.
+  // SessionEnd 없이 죽은 세션은 30분 뒤 비활성이 되는데 그것을 알리는 event가 없으므로 주기적으로 다시 읽는다 (●)
+  const repos = useQuery({ queryKey: ['repos'], queryFn: listRepos, refetchInterval: 60_000 });
   if (repos.error) return <ErrorScreen message={String(repos.error)} />;
   if (!repos.data) return <p className="p-4 text-gray-500">불러오는 중…</p>;
 

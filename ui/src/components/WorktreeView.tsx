@@ -109,10 +109,10 @@ export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: 
           <div className="h-4" />
           {files.error && <p className="text-red-600">{String(files.error)}</p>}
           {files.data?.length === 0 && <p className="text-gray-500">{EMPTY_TEXT[view]}</p>}
-          {/* view마다 펼침 상태를 새로 시작한다 */}
+          {/* view·세션마다 펼침 상태를 새로 시작한다 */}
           {ordered.map((f) => (
             <FileDiff
-              key={`${view}:${f.path}`}
+              key={`${view}:${sessionId}:${f.path}`}
               worktreeId={worktree.id}
               file={f}
               view={view}

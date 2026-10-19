@@ -54,7 +54,7 @@ export const FileDiff = memo(function FileDiff({ worktreeId, file, view, session
         {file.uncertain && (
           <span
             className="text-xs text-gray-400"
-            title="Bash가 바꾼 파일이라 세션 전 내용을 모릅니다. 세션 시작 commit과 비교합니다"
+            title="세션 전 내용을 정확히 알 수 없습니다. 세션 시작 commit 또는 빈 파일과 비교합니다"
           >
             원본 불확실
           </span>

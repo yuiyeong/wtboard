@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionSummary } from '../api';
-import { effectiveView, filesKey, patchKey, pickSession, sessionLabel, turnLabel } from './sessions';
+import { effectiveView, filesKey, patchKey, pickSession, sessionLabel, tabDisabled, turnLabel } from './sessions';
 
 const session = (id: string, overrides: Partial<SessionSummary> = {}): SessionSummary => ({
   id,
@@ -42,6 +42,18 @@ describe('effectiveView', () => {
   it('session이 있으면 고른 view 그대로', () => {
     expect(effectiveView('turn', session('s'))).toBe('turn');
     expect(effectiveView('branch', session('s'))).toBe('branch');
+  });
+});
+
+describe('tabDisabled', () => {
+  it('session이 없으면 세션 탭 두 개만 비활성', () => {
+    expect(tabDisabled('branch', null)).toBe(false);
+    expect(tabDisabled('session', null)).toBe(true);
+    expect(tabDisabled('turn', null)).toBe(true);
+  });
+
+  it('session이 있으면 모두 활성', () => {
+    for (const v of ['branch', 'session', 'turn'] as const) expect(tabDisabled(v, session('s'))).toBe(false);
   });
 });
 
