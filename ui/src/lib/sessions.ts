@@ -1,4 +1,5 @@
 import type { SessionSummary, View } from '../api';
+import { formatHHMM } from './time';
 
 /** 기억한 session이 목록에 있으면 그것, 없으면 첫 번째(최근 활동), 목록이 비면 null */
 export function pickSession(sessions: SessionSummary[], remembered: string | undefined): SessionSummary | null {
@@ -28,7 +29,5 @@ export function turnLabel(s: SessionSummary): string {
 
 /** 세션 select의 항목. `14:02 시작`, 활성이면 `14:02 시작 ●` */
 export function sessionLabel(s: SessionSummary): string {
-  const d = new Date(s.startedAt);
-  const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  return `${hhmm} 시작${s.active ? ' ●' : ''}`;
+  return `${formatHHMM(s.startedAt)} 시작${s.active ? ' ●' : ''}`;
 }

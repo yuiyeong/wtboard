@@ -1,5 +1,6 @@
 import { getChangeKey, type ChangeData } from 'react-diff-view';
 import type { Comment, Side, View } from '../api';
+import { formatHHMM } from './time';
 
 export const commentsKey = (worktreeId: string) => ['comments', worktreeId] as const;
 
@@ -48,7 +49,9 @@ export function placeComments(comments: Comment[], changes: ChangeData[], view: 
       continue;
     }
     const key = getChangeKey(change);
-    byChangeKey.set(key, [...(byChangeKey.get(key) ?? []), c]);
+    const placed = byChangeKey.get(key);
+    if (placed) placed.push(c);
+    else byChangeKey.set(key, [c]);
   }
   return { byChangeKey, outdated };
 }
@@ -66,12 +69,6 @@ export function sortForList(comments: Comment[]): Comment[] {
 
 // SQLite의 ORDER BY path는 byte 순서라 localeCompare를 쓰지 않는다
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-
-/** 로컬 시각 `HH:MM` (24시간) */
-export function formatHHMM(ms: number): string {
-  const d = new Date(ms);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
 
 /** `미전송` / `전송됨 · 14:05` / `복사됨 · 14:05` (복사는 `sentTo`가 `copy`) */
 export function statusLabel(c: Comment, fmtTime: (ms: number) => string = formatHHMM): string {

@@ -10,3 +10,9 @@ export function formatRelative(ms: number, now: number): string {
   if (diff < DAY) return `${Math.floor(diff / HOUR)}시간 전`;
   return `${Math.floor(diff / DAY)}일 전`;
 }
+
+/** 로컬 시각 `HH:MM` (24시간, 0 채움) */
+export function formatHHMM(ms: number): string {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
