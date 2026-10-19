@@ -3,22 +3,12 @@ mod common;
 use std::path::Path;
 use std::sync::Arc;
 
-use common::{clone_on_feat_with_develop, gh_stub, TestRepo};
+use common::{clone_on_feat_with_develop, feat_repo, gh_stub, TestRepo};
 use wtboard_core::git::base::BaseSource;
 use wtboard_core::profile::Profile;
 use wtboard_core::store::viewed::ViewedStore;
 use wtboard_core::watch::Target;
 use wtboard_core::worktree::{ChangeScope, Worktree};
-
-/// main에 src/a.py, src/b.py를 커밋하고 feat 브랜치로 옮긴 레포
-fn feat_repo() -> TestRepo {
-    let repo = TestRepo::new();
-    repo.write("src/a.py", "a = 1\n");
-    repo.write("src/b.py", "b = 1\n");
-    repo.commit_all("base");
-    repo.git(&["checkout", "-q", "-b", "feat"]);
-    repo
-}
 
 fn open(repo: &TestRepo) -> std::sync::Arc<Worktree> {
     Worktree::open(repo.path(), Some("main".into())).unwrap()

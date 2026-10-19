@@ -107,3 +107,13 @@ pub fn clone_on_feat_with_develop() -> (TestRepo, TestRepo) {
     clone.git(&["checkout", "-q", "-b", "feat"]);
     (upstream, clone)
 }
+
+/// main에 src/a.py, src/b.py를 커밋하고 feat 브랜치로 옮긴 레포
+pub fn feat_repo() -> TestRepo {
+    let repo = TestRepo::new();
+    repo.write("src/a.py", "a = 1\n");
+    repo.write("src/b.py", "b = 1\n");
+    repo.commit_all("base");
+    repo.git(&["checkout", "-q", "-b", "feat"]);
+    repo
+}

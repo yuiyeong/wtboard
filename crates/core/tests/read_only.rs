@@ -96,3 +96,17 @@ fn linked_worktree_reads_and_check_attr_leave_both_indexes_untouched() {
     assert_eq!(std::fs::read(&main_index).unwrap(), main_before, "main index was rewritten");
     assert_eq!(std::fs::read(&wt_index).unwrap(), wt_before, "worktree index was rewritten");
 }
+
+#[test]
+fn set_viewed_leaves_the_index_untouched() {
+    let repo = common::feat_repo();
+    repo.write("src/a.py", "a = 2\n");
+    let index = repo.path().join(".git/index");
+    let before = std::fs::read(&index).unwrap();
+
+    let wt = Worktree::open(repo.path(), Some("main".into())).unwrap();
+    wt.set_viewed("src/a.py", true, None).unwrap();
+    wt.set_viewed("src/a.py", false, None).unwrap();
+
+    assert_eq!(std::fs::read(&index).unwrap(), before, ".git/index was rewritten");
+}
