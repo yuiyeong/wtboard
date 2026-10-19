@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
@@ -154,15 +155,13 @@ fn watch_sessions(handle: &AppHandle, data: PathBuf) -> Result<SessionsWatchHand
             // registry를 연 직후에 시작하므로 곧 채워진다
             let Ok(reg) = registry(&app) else { return };
             let roots = reg.roots();
-            let mut worktree_ids: Vec<String> = Vec::new();
-            for dir in session_ids.iter().filter_map(|id| SessionDir::open(&data, id)) {
-                for root in worktrees_of(&dir, &roots) {
-                    let id = root.to_string_lossy().into_owned();
-                    if !worktree_ids.contains(&id) {
-                        worktree_ids.push(id);
-                    }
-                }
-            }
+            let owned: HashSet<PathBuf> = session_ids
+                .iter()
+                .filter_map(|id| SessionDir::open(&data, id))
+                .flat_map(|dir| worktrees_of(&dir, &roots))
+                .collect();
+            let worktree_ids: Vec<String> =
+                roots.iter().filter(|r| owned.contains(*r)).map(|r| r.to_string_lossy().into_owned()).collect();
             if !worktree_ids.is_empty() {
                 let _ = app.emit("session-updated", SessionUpdated { session_ids, worktree_ids });
             }

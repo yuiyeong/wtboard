@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Component, Path};
 use std::sync::Arc;
@@ -10,7 +11,7 @@ use crate::paths::{canonical, nfc};
 use crate::session::format::create_private_dir;
 use crate::session::is_valid_session_id;
 
-/// 바뀐 session id들. 중복 없이, 처음 나온 순서대로
+/// 바뀐 session id들. 중복 없이
 pub type SessionsChangedFn = Arc<dyn Fn(Vec<String>) + Send + Sync>;
 
 /// drop하면 감시가 멈춘다.
@@ -30,15 +31,13 @@ pub fn spawn_sessions_watcher(sessions_dir: &Path, on_change: SessionsChangedFn)
         None,
         move |res: DebounceEventResult| {
             let ids = match res {
-                Ok(events) if !events.iter().any(|e| e.need_rescan()) => {
-                    let mut ids: Vec<String> = Vec::new();
-                    for id in events.iter().flat_map(|e| &e.event.paths).filter_map(|p| session_id(&filter_dir, p)) {
-                        if !ids.contains(&id) {
-                            ids.push(id);
-                        }
-                    }
-                    ids
-                }
+                Ok(events) if !events.iter().any(|e| e.need_rescan()) => events
+                    .iter()
+                    .flat_map(|e| &e.event.paths)
+                    .filter_map(|p| session_id(&filter_dir, p))
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect(),
                 _ => all_sessions(&filter_dir),
             };
             if !ids.is_empty() {
