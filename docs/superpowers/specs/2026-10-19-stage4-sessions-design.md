@@ -85,7 +85,7 @@ pre 스냅샷 S(경로 → status, mtime, size), 지금 status T.
 | 경우 | 바뀐 파일로 보나 | baseline (아직 없을 때만) |
 |---|---|---|
 | S에 없고 T에 있음 (깨끗했다가 바뀜, 또는 새 untracked) | 예 | tracked면 pre HEAD의 내용(`git show <pre HEAD>:<path>`, `file`). untracked면 `new` |
-| S·T 둘 다 있고 mtime 또는 size가 다름 | 예 | `uncertain` (Bash 전 내용을 모른다). 비교 기준은 세션 시작 HEAD의 내용 |
+| S·T 둘 다 있고 mtime 또는 size가 다름 | 예 | `uncertain` (Bash 전 내용을 모른다). hook이 세션 시작 HEAD의 내용을 원본 파일로 저장해 비교 기준으로 쓴다 |
 | S에 있고 T에 없음 (Bash가 되돌림, 커밋, 삭제) | 예 | `uncertain` |
 | 그 외 | 아니오 | — |
 
