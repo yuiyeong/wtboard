@@ -93,6 +93,12 @@ export function CommentsPopover({ worktreeId, comments, listedPaths, autoAttach 
                         <span className="min-w-0 flex-1 truncate font-mono text-gray-700" title={c.path}>
                           {c.path}:{c.line}
                         </span>
+                        {/* 삭제된 줄의 코멘트는 옛 줄 번호라 새 줄 번호와 헷갈리지 않게 표시한다 */}
+                        {c.side === 'old' && (
+                          <span className="shrink-0 text-gray-500" title="옛 줄 번호입니다">
+                            삭제된 줄
+                          </span>
+                        )}
                         {!listed && <span className="shrink-0 text-gray-400">목록에 없음</span>}
                         <span className={`shrink-0 ${c.sentAt === null ? 'text-blue-600' : 'text-gray-400'}`}>
                           {statusLabel(c)}
