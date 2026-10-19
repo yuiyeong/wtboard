@@ -4,6 +4,9 @@ export type FileStatus = 'added' | 'modified' | 'deleted' | 'untracked';
 export type Profile = 'flutter' | 'node' | 'python' | 'default';
 export type BaseSource = 'config' | 'pr' | 'origin';
 
+/** none: 체크 안 함, viewed: 체크했고 그 뒤 안 바뀜, changed: 체크한 뒤 다시 바뀜 */
+export type ViewedState = 'none' | 'viewed' | 'changed';
+
 export interface ChangedFile {
   path: string;
   status: FileStatus;
@@ -12,6 +15,7 @@ export interface ChangedFile {
   deletions: number | null;
   /** 생성·lock 파일. 펼치기 전에는 diff를 계산하지 않는다 */
   collapsed: boolean;
+  viewed: ViewedState;
 }
 
 export type PatchBody =
@@ -32,6 +36,8 @@ export interface WorktreeSummary {
   base: string;
   baseSource: BaseSource;
   changedFiles: number;
+  /** 변경 파일 중 봤음 체크가 안 됐거나 다시 바뀐 파일 수 */
+  unviewedFiles: number;
   profile: Profile;
   /** Unix ms. 앱이 마지막으로 변경을 알린 시각 */
   lastChangedAt: number | null;
@@ -74,3 +80,6 @@ export const listFiles = (worktreeId: string, view: View) =>
 
 export const getPatch = (worktreeId: string, view: View, path: string) =>
   invoke<FilePatch>('get_patch', { worktreeId, view, path });
+
+export const setViewed = (worktreeId: string, path: string, viewed: boolean, hash: string | null) =>
+  invoke<void>('set_viewed', { worktreeId, path, viewed, hash });
