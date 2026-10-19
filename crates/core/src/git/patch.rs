@@ -79,3 +79,136 @@ fn content_hash(merge_base: &str, old_size: Option<u64>, path: &Path) -> String 
     }
     hasher.finalize().to_hex().to_string()
 }
+
+/// 두 파일을 `git diff --no-index`로 비교한다 (세션 view). `None`은 없는 파일(`/dev/null`).
+/// before가 세션 폴더 안의 파일이어도 header 경로는 `a/<rel>`, `b/<rel>`로 바꾼다.
+/// 1MB 초과·바이너리 판정과 hash는 `file_patch`와 같은 규칙이다
+pub fn no_index_patch(
+    git: &Git,
+    rel: &str,
+    before: Option<&Path>,
+    after: Option<&Path>,
+) -> Result<FilePatch, GitError> {
+    let size = |p: Option<&Path>| p.and_then(|p| fs::metadata(p).ok()).map(|m| m.len());
+    let (old_size, new_size) = (size(before), size(after));
+    let too_large = old_size.max(new_size).is_some_and(|s| s > MAX_DIFF_BYTES);
+    let diff = if too_large { Vec::new() } else { no_index(git, &[], before, after)? };
+    if too_large || is_binary(&diff) {
+        let hash = files_hash(&[before, after]);
+        let body = if too_large {
+            PatchBody::TooLarge { old_size, new_size }
+        } else {
+            PatchBody::Binary { old_size, new_size }
+        };
+        return Ok(FilePatch { path: rel.to_owned(), body, hash });
+    }
+    let diff = relabel(&diff, rel);
+    Ok(FilePatch {
+        path: rel.to_owned(),
+        hash: blake3::hash(&diff).to_hex().to_string(),
+        body: PatchBody::Text { diff: String::from_utf8_lossy(&diff).into_owned() },
+    })
+}
+
+/// `git diff --no-index --numstat`의 (추가, 삭제) 줄 수. 바이너리면 `None`, 차이가 없으면 0
+pub fn no_index_numstat(
+    git: &Git,
+    before: Option<&Path>,
+    after: Option<&Path>,
+) -> Result<(Option<u32>, Option<u32>), GitError> {
+    let out = no_index(git, &["--numstat"], before, after)?;
+    let line = out.split(|b| *b == b'\n').next().unwrap_or_default();
+    if line.is_empty() {
+        return Ok((Some(0), Some(0)));
+    }
+    let mut fields = line.split(|b| *b == b'\t').map(|f| std::str::from_utf8(f).ok()?.parse().ok());
+    Ok((fields.next().flatten(), fields.next().flatten()))
+}
+
+/// `--no-index`는 차이가 있으면 exit 1
+fn no_index(git: &Git, extra: &[&str], before: Option<&Path>, after: Option<&Path>) -> Result<Vec<u8>, GitError> {
+    let arg = |p: Option<&Path>| p.map_or_else(|| "/dev/null".to_owned(), |p| p.to_string_lossy().into_owned());
+    let (a, b) = (arg(before), arg(after));
+    let mut args = vec!["diff"];
+    args.extend(DIFF_FLAGS);
+    args.extend(extra);
+    args.extend(["--no-index", "--", a.as_str(), b.as_str()]);
+    git.run_allow(&args, &[0, 1])
+}
+
+/// 첫 hunk 전 header에 `Binary files ... differ`가 있으면 바이너리
+fn is_binary(diff: &[u8]) -> bool {
+    diff.split(|b| *b == b'\n')
+        .take_while(|l| !l.starts_with(b"@@"))
+        .any(|l| l.starts_with(b"Binary files "))
+}
+
+/// header의 파일 경로(`diff --git`, `---`, `+++`)를 `rel`로 바꾼다. `/dev/null`은 그대로.
+/// 세션 폴더의 내용 파일은 0600이라 mode 변화(`old mode`/`new mode`)는 뜻이 없으므로 뺀다
+fn relabel(diff: &[u8], rel: &str) -> Vec<u8> {
+    let (a, b) = (quote(&format!("a/{rel}")), quote(&format!("b/{rel}")));
+    // git은 공백이 든 이름의 `---`/`+++` 줄 끝에 tab을 붙인다
+    let tab = if rel.contains(' ') { "\t" } else { "" };
+    let mut out = Vec::with_capacity(diff.len());
+    let mut header = true;
+    for line in diff.split_inclusive(|c| *c == b'\n') {
+        header &= !line.starts_with(b"@@");
+        let replaced = if !header {
+            None
+        } else if line.starts_with(b"diff --git ") {
+            Some(format!("diff --git {a} {b}\n"))
+        } else if line.starts_with(b"--- ") && !line.starts_with(b"--- /dev/null") {
+            Some(format!("--- {a}{tab}\n"))
+        } else if line.starts_with(b"+++ ") && !line.starts_with(b"+++ /dev/null") {
+            Some(format!("+++ {b}{tab}\n"))
+        } else if line.starts_with(b"old mode ") || line.starts_with(b"new mode ") {
+            Some(String::new())
+        } else {
+            None
+        };
+        match replaced {
+            Some(s) => out.extend_from_slice(s.as_bytes()),
+            None => out.extend_from_slice(line),
+        }
+    }
+    out
+}
+
+/// git의 C-style 경로 quote (`core.quotePath=false`): `"`, `\`, 제어 문자가 있을 때만 감싼다
+fn quote(name: &str) -> String {
+    if !name.chars().any(|c| c == '"' || c == '\\' || c.is_ascii_control()) {
+        return name.to_owned();
+    }
+    let mut out = String::from("\"");
+    for c in name.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\x07' => out.push_str("\\a"),
+            '\x08' => out.push_str("\\b"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\x0b' => out.push_str("\\v"),
+            '\x0c' => out.push_str("\\f"),
+            '\r' => out.push_str("\\r"),
+            c if c.is_ascii_control() => out.push_str(&format!("\\{:03o}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// 바이너리/큰 파일의 hash: 각 파일의 크기(없으면 표시값)와 내용
+fn files_hash(files: &[Option<&Path>]) -> String {
+    let mut hasher = blake3::Hasher::new();
+    for file in files {
+        let opened = file.and_then(|p| fs::File::open(p).ok());
+        let size = opened.as_ref().and_then(|f| f.metadata().ok()).map(|m| m.len());
+        hasher.update(&size.unwrap_or(u64::MAX).to_le_bytes());
+        if let Some(f) = opened {
+            let _ = hasher.update_reader(f);
+        }
+    }
+    hasher.finalize().to_hex().to_string()
+}

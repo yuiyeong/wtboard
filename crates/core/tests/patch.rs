@@ -3,7 +3,7 @@ mod common;
 use common::TestRepo;
 use wtboard_core::domain::{FilePatch, PatchBody, MAX_DIFF_BYTES};
 use wtboard_core::git::changes::list_changes;
-use wtboard_core::git::patch::file_patch;
+use wtboard_core::git::patch::{file_patch, no_index_numstat, no_index_patch};
 use wtboard_core::git::Git;
 
 fn patch_for(repo: &TestRepo, mb: &str, path: &str) -> FilePatch {
@@ -119,4 +119,60 @@ fn untracked_symlink_to_special_file_does_not_hang() {
     });
     let target = fifo.to_string_lossy().into_owned();
     assert!(text(&patch).contains(&format!("+{target}")), "symlink은 git처럼 링크 대상을 보여 준다: {patch:?}");
+}
+
+#[test]
+fn no_index_patch_relabels_header_to_worktree_path() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = TestRepo::new();
+    let other = tempfile::tempdir().unwrap();
+    let before = other.path().join("baseline");
+    std::fs::write(&before, "a\nb\n").unwrap();
+    std::fs::set_permissions(&before, std::fs::Permissions::from_mode(0o600)).unwrap();
+    repo.write("dir/x y.sh", "a\nc\n");
+    let after = repo.path().join("dir/x y.sh");
+    std::fs::set_permissions(&after, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let git = Git::new(repo.path());
+
+    let p = no_index_patch(&git, "dir/x y.sh", Some(&before), Some(&after)).unwrap();
+    let d = text(&p);
+    assert!(d.starts_with("diff --git a/dir/x y.sh b/dir/x y.sh\n"), "{d}");
+    assert!(d.contains("\n--- a/dir/x y.sh\t\n+++ b/dir/x y.sh\t\n@@"), "{d}");
+    // 세션 폴더 내용 파일의 권한(0600)은 mode 변화로 보이지 않는다
+    assert!(!d.contains("old mode") && !d.contains("new mode"), "{d}");
+    assert!(!d.contains(other.path().file_name().unwrap().to_str().unwrap()), "{d}");
+    assert_eq!(p.hash, blake3::hash(d.as_bytes()).to_hex().to_string());
+    assert_eq!(no_index_numstat(&git, Some(&before), Some(&after)).unwrap(), (Some(1), Some(1)));
+}
+
+#[test]
+fn no_index_patch_matches_git_for_quoted_new_file() {
+    let repo = TestRepo::new();
+    let rel = "q\"uote d.txt";
+    repo.write(rel, "x\n");
+    let git = Git::new(repo.path());
+    // 상대 경로로 부른 git 출력과 같아야 한다 (quote, 공백 뒤 tab)
+    let expected = git.run_allow(&["diff", "--no-color", "--no-index", "--", "/dev/null", rel], &[1]).unwrap();
+    let p = no_index_patch(&git, rel, None, Some(&repo.path().join(rel))).unwrap();
+    assert_eq!(text(&p), String::from_utf8(expected).unwrap());
+    assert_eq!(no_index_numstat(&git, None, Some(&repo.path().join(rel))).unwrap(), (Some(1), Some(0)));
+}
+
+#[test]
+fn no_index_patch_binary_and_too_large() {
+    let repo = TestRepo::new();
+    repo.write("b.bin", [0u8, 1, 2]);
+    let bin = repo.path().join("b.bin");
+    let git = Git::new(repo.path());
+    let p = no_index_patch(&git, "b.bin", None, Some(&bin)).unwrap();
+    assert_eq!(p.body, PatchBody::Binary { old_size: None, new_size: Some(3) });
+    assert_eq!(no_index_numstat(&git, None, Some(&bin)).unwrap(), (None, None));
+
+    repo.write("big.txt", "x".repeat(MAX_DIFF_BYTES as usize + 1));
+    let big = repo.path().join("big.txt");
+    let p = no_index_patch(&git, "big.txt", Some(&bin), Some(&big)).unwrap();
+    assert_eq!(p.body, PatchBody::TooLarge { old_size: Some(3), new_size: Some(MAX_DIFF_BYTES + 1) });
+    repo.write("big.txt", "y".repeat(MAX_DIFF_BYTES as usize + 1));
+    let again = no_index_patch(&git, "big.txt", Some(&bin), Some(&big)).unwrap();
+    assert_ne!(p.hash, again.hash);
 }

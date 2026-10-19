@@ -424,7 +424,7 @@ fn create_private(path: &Path) -> io::Result<File> {
 }
 
 /// 읽은 바이트 수와 blake3 hash (hex)
-fn hash_reader(src: impl io::Read) -> io::Result<(u64, String)> {
+pub(crate) fn hash_reader(src: impl io::Read) -> io::Result<(u64, String)> {
     let mut hasher = blake3::Hasher::new();
     hasher.update_reader(src)?;
     Ok((hasher.count(), hasher.finalize().to_hex().to_string()))
@@ -438,7 +438,7 @@ fn mirror(base: &Path, path: &Path) -> PathBuf {
     out
 }
 
-fn mtime_ms(path: &Path) -> Option<u64> {
+pub(crate) fn mtime_ms(path: &Path) -> Option<u64> {
     let t = fs::metadata(path).ok()?.modified().ok()?;
     Some(t.duration_since(UNIX_EPOCH).ok()?.as_millis() as u64)
 }

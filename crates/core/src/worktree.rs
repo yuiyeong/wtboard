@@ -28,6 +28,8 @@ pub enum WorktreeError {
     UnknownFile(String),
     #[error(transparent)]
     Store(#[from] StoreError),
+    #[error("파일을 읽을 수 없음: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 /// 재계산 범위. 여러 개를 합칠 때는 큰 쪽을 따른다 (`File < List < Base`).
@@ -59,6 +61,8 @@ pub struct FileEntry {
     #[serde(flatten)]
     pub file: ChangedFile,
     pub viewed: ViewedState,
+    /// 세션 view에서 원본이 세션 전 내용이 아닐 수 있음 (Bash가 고친 파일, 원본 기록 없음). 브랜치 view는 항상 false
+    pub uncertain: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -216,6 +220,10 @@ impl Worktree {
         &self.layout
     }
 
+    pub fn git(&self) -> &Git {
+        &self.git
+    }
+
     pub fn files(&self) -> Vec<ChangedFile> {
         self.state.lock().unwrap().files.values().cloned().collect()
     }
@@ -225,7 +233,7 @@ impl Worktree {
         let st = self.state.lock().unwrap();
         st.files
             .values()
-            .map(|f| FileEntry { file: f.clone(), viewed: st.viewed_state(&f.path) })
+            .map(|f| FileEntry { file: f.clone(), viewed: st.viewed_state(&f.path), uncertain: false })
             .collect()
     }
 
