@@ -1,6 +1,7 @@
 import { QueryClient, type InvalidateQueryFilters, type QueryKey } from '@tanstack/react-query';
 import { describe, expect, it } from 'vitest';
 import type { WorktreeChanged } from '../api';
+import { commentsKey } from './comments';
 import { filtersForSessionUpdated, keysToInvalidate } from './events';
 import { filesKey, patchKey } from './sessions';
 
@@ -73,5 +74,11 @@ describe('filtersForSessionUpdated', () => {
       patchKey('w1', 'a.py', 'session', 's1'),
       patchKey('w2', 'b.py', 'turn', 's2'),
     ]);
+  });
+
+  it('worktree의 comments도 무효화한다', () => {
+    const keys: QueryKey[] = [commentsKey('w1'), commentsKey('w2'), commentsKey('w3')];
+    const filters = filtersForSessionUpdated({ sessionIds: ['s1'], worktreeIds: ['w1', 'w2'] });
+    expect(invalidated(keys, filters)).toEqual([commentsKey('w1'), commentsKey('w2')]);
   });
 });

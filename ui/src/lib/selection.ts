@@ -24,6 +24,12 @@ export function resolveSelection(repos: RepoSummary[], selection: Selection | nu
   return { repo: fallback, worktree: fallback.worktrees.find((w) => !w.error) ?? fallback.worktrees[0] };
 }
 
+/** worktree id가 속한 레포를 찾아 선택으로 만든다. 목록에 없으면 null (tray의 `select-worktree`) */
+export function selectionForWorktree(repos: RepoSummary[], worktreeId: string): Selection | null {
+  const repo = repos.find((r) => r.worktrees.some((w) => w.id === worktreeId));
+  return repo ? { repoId: repo.id, worktreeId } : null;
+}
+
 /** sidebar 표시 이름. detached HEAD면 폴더 이름 */
 export function worktreeLabel(w: WorktreeSummary): string {
   return w.branch ?? w.path.split('/').filter(Boolean).pop() ?? w.path;

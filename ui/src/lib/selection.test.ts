@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { RepoSummary, WorktreeSummary } from '../api';
 import { worktreeFixture } from './fixtures';
-import { resolveSelection, worktreeLabel } from './selection';
+import { resolveSelection, selectionForWorktree, worktreeLabel } from './selection';
 
 const wt = (id: string, branch: string | null = id) => worktreeFixture({ id, path: `/dev/${id}`, branch });
 const repo = (id: string, ...worktrees: WorktreeSummary[]): RepoSummary => ({ id, name: id, profile: 'default', worktrees });
@@ -45,5 +45,16 @@ describe('worktreeLabel', () => {
   // Review Focus 5
   it('detached HEAD면 폴더 이름', () => {
     expect(worktreeLabel(wt('my-wt', null))).toBe('my-wt');
+  });
+});
+
+describe('selectionForWorktree', () => {
+  it('있는 id는 {repoId, worktreeId}', () => {
+    expect(selectionForWorktree(repos, 'b1')).toEqual({ repoId: 'b', worktreeId: 'b1' });
+    expect(selectionForWorktree(repos, 'a2')).toEqual({ repoId: 'a', worktreeId: 'a2' });
+  });
+
+  it('없는 id는 null', () => {
+    expect(selectionForWorktree(repos, 'gone')).toBeNull();
   });
 });

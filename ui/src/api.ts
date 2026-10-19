@@ -48,6 +48,8 @@ export interface WorktreeSummary {
   fsmonitor: boolean;
   /** 이 worktree에 지금 활동 중인 Claude Code 세션이 있다 */
   activeSession: boolean;
+  /** 아직 Claude에게 전달되지 않은 리뷰 코멘트 수 */
+  unsentComments: number;
   /** 열지 못한 이유 */
   error: string | null;
 }
@@ -67,6 +69,8 @@ export interface EntryError {
 export interface ReposResponse {
   repos: RepoSummary[];
   errors: EntryError[];
+  /** 다음 prompt에 미전송 코멘트를 자동으로 붙인다 (꺼져 있으면 복사해서 붙여 넣는다) */
+  autoAttachComments: boolean;
 }
 
 /** branch: 브랜치 전체, session: 이번 세션, turn: 마지막 응답 */
@@ -111,3 +115,50 @@ export const getPatch = (worktreeId: string, view: View, path: string, sessionId
 
 export const setViewed = (worktreeId: string, path: string, viewed: boolean, hash: string | null) =>
   invoke<void>('set_viewed', { worktreeId, path, viewed, hash });
+
+/** old: 삭제된 줄(옛 줄 번호), new: 추가·문맥 줄(새 줄 번호) */
+export type Side = 'old' | 'new';
+
+export interface Comment {
+  id: number;
+  worktree: string;
+  path: string;
+  side: Side;
+  line: number;
+  /** 코멘트를 단 view. `old` side는 같은 view에서만 위치를 맞춘다 */
+  view: View;
+  /** 코멘트를 달 때 그 줄의 내용 (`+`/`-` 접두 없이). 위치 맞추기에 쓴다 */
+  snippet: string;
+  body: string;
+  /** Unix ms */
+  createdAt: number;
+  updatedAt: number;
+  /** Unix ms. null이면 미전송 */
+  sentAt: number | null;
+  /** 전송 대상. session id 또는 `copy` */
+  sentTo: string | null;
+}
+
+export type NewComment = Pick<Comment, 'path' | 'side' | 'line' | 'view' | 'snippet' | 'body'>;
+
+export interface CopiedComments {
+  markdown: string;
+  ids: number[];
+}
+
+export const listComments = (worktreeId: string) => invoke<Comment[]>('list_comments', { worktreeId });
+
+export const addComment = (worktreeId: string, comment: NewComment) =>
+  invoke<Comment>('add_comment', { worktreeId, ...comment });
+
+export const updateComment = (id: number, body: string) => invoke<Comment>('update_comment', { id, body });
+
+export const deleteComment = (id: number) => invoke<void>('delete_comment', { id });
+
+/** 전송된 코멘트를 지운다. 지운 수를 돌려준다 */
+export const clearSentComments = (worktreeId: string) => invoke<number>('clear_sent_comments', { worktreeId });
+
+/** 미전송 코멘트를 markdown으로 만든다 (전송됨 표시는 `markCommentsSent`로 따로 한다) */
+export const copyComments = (worktreeId: string) => invoke<CopiedComments>('copy_comments', { worktreeId });
+
+export const markCommentsSent = (ids: number[]) => invoke<number>('mark_comments_sent', { ids });
