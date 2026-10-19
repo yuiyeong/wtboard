@@ -60,8 +60,9 @@ pub fn post_bash(dir: &SessionDir, input: &HookInput) -> HookResult {
     let before: StatusSnapshot = serde_json::from_slice(&bytes)?;
     let after = status(&before.root)?;
     let meta = dir.read_meta();
-    let start_head = meta.as_ref().and_then(|m| m.start_head.as_deref());
     let git = Git::new(&before.root);
+    let start_head = meta.as_ref().and_then(|m| m.start_head.as_deref());
+    let source = Source { git: &git, pre_head: &before.head, start_head };
 
     let mut paths = Vec::new();
     let mut first_error = None;
@@ -69,7 +70,6 @@ pub fn post_bash(dir: &SessionDir, input: &HookInput) -> HookResult {
         let Some(path) = valid_abs_path(&before.root.join(&rel)) else { continue };
         // 이미 원본이 있으면 git show를 부르지 않는다. 경쟁은 `ensure_baseline`이 가린다
         if !dir.baseline_file(&path).exists() {
-            let source = Source { git: &git, pre_head: &before.head, start_head };
             if let Err(e) = source.record(dir, &path, &rel, change) {
                 first_error.get_or_insert(e);
             }
@@ -86,10 +86,7 @@ pub fn post_bash(dir: &SessionDir, input: &HookInput) -> HookResult {
             agent_id: input.agent_id.clone(),
         })?;
     }
-    match first_error {
-        Some(e) => Err(e.into()),
-        None => Ok(()),
-    }
+    first_error.map_or(Ok(()), |e| Err(e.into()))
 }
 
 /// 바뀐 파일의 Bash 전 내용을 얼마나 아는지
@@ -188,11 +185,9 @@ fn parse_status(buf: &[u8]) -> Vec<(String, String)> {
             _ => continue,
         };
         let parts: Vec<&str> = line.splitn(fields + 1, ' ').collect();
-        if let [kind, .., path] = parts[..] {
-            if parts.len() == fields + 1 {
-                let xy = if kind == "?" { "??" } else { parts[1] };
-                out.push((path.to_string(), xy.to_string()));
-            }
+        if parts.len() == fields + 1 {
+            let xy = if fields == 1 { "??" } else { parts[1] };
+            out.push((parts[fields].to_string(), xy.to_string()));
         }
     }
     out
