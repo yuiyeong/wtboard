@@ -135,7 +135,7 @@ async fn set_viewed(
 ) -> Result<(), String> {
     blocking(move || {
         worktree(&app, &worktree_id)?.set_viewed(&path, viewed, hash).map_err(|e| e.to_string())?;
-        tray(&app).request();
+        request_tray(&app);
         Ok(())
     })
     .await
@@ -151,8 +151,9 @@ fn registry(app: &AppHandle) -> Result<&Registry, String> {
     app.state::<AppState>().inner().registry.wait().as_ref().map_err(Clone::clone)
 }
 
-fn tray(app: &AppHandle) -> &TrayUpdater {
-    &app.state::<AppState>().inner().tray
+/// 메뉴바를 다시 계산하게 한다. 1초에 한 번으로 모인다
+fn request_tray(app: &AppHandle) {
+    app.state::<AppState>().inner().tray.request();
 }
 
 fn worktree(app: &AppHandle, id: &str) -> Result<Arc<Worktree>, String> {
@@ -197,7 +198,7 @@ fn watch_sessions(handle: &AppHandle, data: PathBuf) -> Result<SessionsWatchHand
                 roots.iter().filter(|r| owned.contains(*r)).map(|r| r.to_string_lossy().into_owned()).collect();
             if !worktree_ids.is_empty() {
                 let _ = app.emit("session-updated", SessionUpdated { session_ids, worktree_ids });
-                tray(&app).request();
+                request_tray(&app);
             }
         }),
     )
@@ -233,11 +234,11 @@ fn open_registry(handle: &AppHandle) -> Result<Registry, String> {
     let sink = Sink {
         changed: Arc::new(move |ev: WorktreeChanged| {
             let _ = changed.emit("worktree-changed", ev);
-            tray(&changed).request();
+            request_tray(&changed);
         }),
         updated: Arc::new(move || {
             let _ = updated.emit("worktrees-updated", ());
-            tray(&updated).request();
+            request_tray(&updated);
         }),
     };
     // 상태는 data dir(config 파일이 있는 폴더)에 둔다. 열 수 없으면 이번 실행만 메모리에 둔다
@@ -287,7 +288,7 @@ fn main() {
                 let result = open_registry(&handle);
                 let _ = handle.state::<AppState>().registry.set(result);
             });
-            tray(app.handle()).request();
+            request_tray(app.handle());
             Ok(())
         })
         // 창 닫기 = 숨기기. 앱은 메뉴바에 남는다

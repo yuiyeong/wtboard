@@ -73,13 +73,16 @@ impl TrayUpdater {
     /// 갱신 thread를 띄운다. registry가 열릴 때까지 기다린 뒤 계산한다
     pub fn spawn(app: AppHandle) -> Self {
         let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || loop {
-            if let Err(RecvTimeoutError::Disconnected) = rx.recv_timeout(TIMER) {
-                return;
+        std::thread::spawn(move || {
+            let mut shown = None;
+            loop {
+                if let Err(RecvTimeoutError::Disconnected) = rx.recv_timeout(TIMER) {
+                    return;
+                }
+                while rx.try_recv().is_ok() {}
+                refresh(&app, &mut shown);
+                std::thread::sleep(THROTTLE);
             }
-            while rx.try_recv().is_ok() {}
-            refresh(&app);
-            std::thread::sleep(THROTTLE);
         });
         Self { tx }
     }
@@ -95,7 +98,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(tauri::include_image!("icons/tray.png"))
         .icon_as_template(true)
-        .menu(&menu(app, &empty)?)
+        .menu(&menu(app, &empty, false)?)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| on_menu(app, event.id().as_ref()))
         .build(app)?;
@@ -120,22 +123,27 @@ pub fn show_window(app: &AppHandle) {
     }
 }
 
-fn refresh(app: &AppHandle) {
+/// `shown`은 마지막으로 보인 (model, 항상 위에). 같으면 메뉴를 다시 만들지 않는다 (파일 event마다 불린다)
+fn refresh(app: &AppHandle, shown: &mut Option<(TrayModel, bool)>) {
     let Ok(reg) = crate::registry(app) else { return };
     let m = model(&reg.tray_worktrees(), &active_roots(&data_dir(), &reg.roots(), now_ms()));
+    // 창 상태를 그대로 보인다. 저장 값과 어긋나도 실제 동작이 보인다
+    let on_top = app.get_webview_window(WINDOW).and_then(|w| w.is_always_on_top().ok()).unwrap_or(false);
+    if shown.as_ref().is_some_and(|(sm, so)| *sm == m && *so == on_top) {
+        return;
+    }
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
-    match menu(app, &m) {
+    match menu(app, &m, on_top) {
         Ok(menu) => {
             let _ = tray.set_menu(Some(menu));
         }
         Err(e) => eprintln!("[wtboard] 메뉴바 메뉴를 만들 수 없음: {e}"),
     }
-    let _ = tray.set_title(m.title);
+    let _ = tray.set_title(m.title.as_deref());
+    *shown = Some((m, on_top));
 }
 
-fn menu(app: &AppHandle, m: &TrayModel) -> tauri::Result<Menu<tauri::Wry>> {
-    // 창 상태를 그대로 보인다. 저장 값과 어긋나도 실제 동작이 보인다
-    let on_top = app.get_webview_window(WINDOW).and_then(|w| w.is_always_on_top().ok()).unwrap_or(false);
+fn menu(app: &AppHandle, m: &TrayModel, on_top: bool) -> tauri::Result<Menu<tauri::Wry>> {
     let mut b = MenuBuilder::new(app).item(&MenuItemBuilder::new(&m.header).enabled(false).build(app)?).separator();
     for i in &m.items {
         let text = if i.count > 0 { format!("{}    {}", i.label, i.count) } else { i.label.clone() };
@@ -170,14 +178,13 @@ fn toggle_on_top(app: &AppHandle) {
     let Some(w) = app.get_webview_window(WINDOW) else { return };
     let on = !w.is_always_on_top().unwrap_or(false);
     let _ = w.set_always_on_top(on);
-    let state = app.state::<crate::AppState>();
-    if let Some(settings) = state.settings.get() {
+    if let Some(settings) = app.state::<crate::AppState>().settings.get() {
         if let Err(e) = settings.set(ON_TOP_KEY, if on { "1" } else { "0" }) {
             eprintln!("[wtboard] 항상 위에 설정을 저장할 수 없음: {e}");
         }
     }
     // check 표시를 창 상태에 맞춘다
-    state.tray.request();
+    crate::request_tray(app);
 }
 
 #[cfg(test)]
