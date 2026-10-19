@@ -10,7 +10,7 @@
 | 2. 여러 레포·worktree 자동 발견 + 사이드바 + 프로필 3종 | 완료 (2026-10-15) | `plans/2026-10-15-stage2-multi-repo.md` (spec: `specs/2026-10-15-stage2-multi-repo-design.md`) |
 | 3. 봤음 체크 + 다시 바뀜 표시 | 완료 (2026-10-19) | `plans/2026-10-19-stage3-viewed.md` (spec: `specs/2026-10-19-stage3-viewed-design.md`) |
 | 4. plugin(hooks) + 이번 세션 / 마지막 응답 탭 | 완료 (2026-10-19) | `plans/2026-10-19-stage4-sessions.md` (spec: `specs/2026-10-19-stage4-sessions-design.md`) |
-| 5. 리뷰 코멘트 자동 첨부 + 메뉴바 | 완료 (2026-10-19). 단 "5단계 사용자 확인 대기"의 화면 항목은 아직 사람이 확인하지 않았다 | `plans/2026-10-19-stage5-review-comments.md` (spec: `specs/2026-10-19-stage5-review-comments-design.md`) |
+| 5. 리뷰 코멘트 자동 첨부 + 메뉴바 | 완료 (2026-10-19) | `plans/2026-10-19-stage5-review-comments.md` (spec: `specs/2026-10-19-stage5-review-comments-design.md`) |
 | 6. 미정 | 아직 없음 | "6단계 후보" 참고 |
 
 ## 1단계 결과
@@ -137,19 +137,19 @@
 - `core::store`를 `db`(열기·migration), `comments`, `settings`, `viewed`, `config`로 나눴다. hook용 `open_existing(path, busy)`는 DB를 만들지 않는다.
 - 작업은 `main`이 아니라 branch `stage5-review-comments`에서 했다. 끝나면 `main`에 fast-forward한다.
 - 메뉴바는 모델(미확인 합계·worktree 줄)이 바뀌지 않으면 메뉴를 다시 만들지 않는다. 갱신은 1초에 한 번으로 묶는다.
-- 사용자가 직접 확인하지 못한 항목은 아래 "5단계 사용자 확인 대기"에 둔다.
+- 사용자가 직접 확인하지 못한 항목은 아래 "5단계 사용자 확인"에 둔다.
 - 쓰던 새 코멘트는 worktree·path별로 하나씩, 수정 본문은 comment id별로 메모리 store(`ui/src/drafts.ts`, 저장하지 않음)에 둔다. 새 코멘트는 연 view를 함께 둬서 그 view로 저장하고, `old` side는 그 view에서만 줄에 맞춘다 (다른 view에서는 "위치가 바뀐 코멘트" 묶음에 보인다).
 - slash command 판정: 첫 단어가 `/`로 시작하고 그 뒤에 `/`가 없을 때만 명령으로 보고 첨부를 건너뛴다.
 
-## 5단계 사용자 확인 대기
+## 5단계 사용자 확인
 
-실제 앱의 키 입력과 menu bar 클릭이 필요해 자동으로 확인하지 못했다. 사람이 확인한 뒤 이 목록을 결과로 바꾼다.
+실제 앱의 키 입력과 menu bar 클릭이 필요해 사용자가 fixture 앱에서 직접 확인했다 (2026-10-19).
 
-- [ ] 새 코멘트 입력: 줄 gutter의 `+` → 글 입력 → Cmd+Enter 또는 `저장` → 미전송 widget과 header `💬 미전송 n`.
-- [ ] 메뉴바 메뉴를 열어 worktree 줄을 고르면 창이 앞으로 오고 그 worktree가 선택된다 (`select-worktree`). 숫자(title)는 구현 중 screenshot으로 봤다.
-- [ ] 창 닫기(빨간 버튼) → Dock 아이콘 클릭으로 다시 열기.
-- [ ] "항상 위에 띄우기" 토글 → 앱 재시작 뒤 유지.
-- [ ] 대화형 `claude`에서 `systemMessage`("wtboard: 리뷰 코멘트 n개를 첨부했습니다")가 화면에 보이는지.
+- [x] 새 코멘트 입력: 줄 gutter의 `+` → 글 입력 → Cmd+Enter 또는 `저장` → 미전송 widget과 header `💬 미전송 n`.
+- [x] 메뉴바 메뉴를 열어 worktree 줄을 고르면 창이 앞으로 오고 그 worktree가 선택된다 (`select-worktree`). 숫자(title)는 구현 중 screenshot으로 봤다.
+- [x] 창 닫기(빨간 버튼) → Dock 아이콘 클릭으로 다시 열기.
+- [x] "항상 위에 띄우기" 토글 → 앱 재시작 뒤 유지. 토글이 `settings.always_on_top`에 저장되는 것을 DB로 확인했다.
+- [ ] (미확인) 대화형 `claude`에서 `systemMessage`("wtboard: 리뷰 코멘트 n개를 첨부했습니다")가 화면에 보이는지.
 
 ## 5단계 알려진 한계
 
