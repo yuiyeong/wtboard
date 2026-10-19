@@ -93,6 +93,8 @@ pub struct WorktreeSummary {
     pub fsmonitor: bool,
     /// 활성 Claude Code 세션이 있음. 세션 기록을 아는 앱이 채운다 (core는 항상 false)
     pub active_session: bool,
+    /// 아직 보내지 않은 리뷰 코멘트 수. 코멘트를 아는 앱이 채운다 (core는 항상 0)
+    pub unsent_comments: usize,
     /// 열지 못한 이유. 있으면 나머지 필드는 기본값이다
     pub error: Option<String>,
 }
@@ -113,6 +115,7 @@ impl WorktreeSummary {
             slow_list_ms: None,
             fsmonitor: false,
             active_session: false,
+            unsent_comments: 0,
             error: Some(error),
         }
     }
@@ -292,6 +295,7 @@ impl Worktree {
             slow_list_ms: (list_ms > slow_ms).then_some(list_ms),
             fsmonitor,
             active_session: false,
+            unsent_comments: 0,
             error: None,
         }
     }

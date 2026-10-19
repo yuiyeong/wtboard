@@ -1,3 +1,5 @@
+mod comments;
+
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -11,8 +13,10 @@ use wtboard_core::repo::{RepoSummary, Sink};
 use wtboard_core::session::list::{active_roots, cleanup, sessions_for, worktrees_of, SessionSummary};
 use wtboard_core::session::view::{self, SessionView, SessionViewCache};
 use wtboard_core::session::{sessions_dir, SessionDir};
+use wtboard_core::store::comments::CommentStore;
 use wtboard_core::store::config::Config;
 use wtboard_core::store::data_dir;
+use wtboard_core::store::settings::SettingsStore;
 use wtboard_core::store::viewed::ViewedStore;
 use wtboard_core::watch::{spawn_sessions_watcher, SessionsWatchHandle};
 use wtboard_core::worktree::{now_ms, FileEntry, Worktree, WorktreeChanged};
@@ -24,6 +28,11 @@ struct AppState {
     sessions_watch: OnceLock<SessionsWatchHandle>,
     /// 세션 view 목록의 파일 비교 결과. 목록을 다시 계산할 때 바뀌지 않은 파일은 비교하지 않는다
     session_cache: SessionViewCache,
+    /// registry와 함께 열린다. registry를 기다린 뒤에는 채워져 있다
+    comments: OnceLock<Arc<CommentStore>>,
+    /// 앱 설정(tray 등). 열 때 `comments`와 같이 채운다
+    #[allow(dead_code)]
+    settings: OnceLock<SettingsStore>,
 }
 
 #[derive(Serialize)]
@@ -31,6 +40,8 @@ struct AppState {
 struct ReposResponse {
     repos: Vec<RepoSummary>,
     errors: Vec<EntryError>,
+    /// 설정을 읽지 못하면 true (기본값)
+    auto_attach_comments: bool,
 }
 
 /// `session-updated` event. worktree는 그 세션들이 속한 것
@@ -50,7 +61,14 @@ async fn list_repos(app: AppHandle) -> Result<ReposResponse, String> {
         for w in repos.iter_mut().flat_map(|r| &mut r.worktrees) {
             w.active_session = active.contains(Path::new(&w.id));
         }
-        Ok(ReposResponse { repos, errors: reg.errors().to_vec() })
+        // 코멘트 저장소는 registry와 함께 열린다. 못 읽으면 0으로 둔다
+        let unsent = app.state::<AppState>().inner().comments.get().and_then(|s| s.unsent_counts().ok());
+        for w in repos.iter_mut().flat_map(|r| &mut r.worktrees) {
+            w.unsent_comments = unsent.as_ref().and_then(|u| u.get(&w.id)).copied().unwrap_or(0);
+        }
+        let auto_attach_comments =
+            Config::load(&Config::default_path()).map_or(true, |c| c.review.auto_attach_comments);
+        Ok(ReposResponse { repos, errors: reg.errors().to_vec(), auto_attach_comments })
     })
     .await
 }
@@ -175,6 +193,21 @@ fn watch_sessions(handle: &AppHandle, data: PathBuf) -> Result<SessionsWatchHand
     .map_err(|e| format!("세션 기록을 감시할 수 없음: {e}"))
 }
 
+/// store를 열고, 열 수 없으면 메모리 store와 경고를 돌려준다
+fn open_or_memory<T, E: std::fmt::Display>(
+    path: &Path,
+    warning: &str,
+    open: impl FnOnce(&Path) -> Result<T, E>,
+    in_memory: impl FnOnce() -> T,
+) -> (T, Option<EntryError>) {
+    match open(path) {
+        Ok(store) => (store, None),
+        Err(e) => {
+            (in_memory(), Some(EntryError { path: path.display().to_string(), message: format!("{warning}: {e}") }))
+        }
+    }
+}
+
 fn open_registry(handle: &AppHandle) -> Result<Registry, String> {
     let path = Config::default_path();
     let hint = format!("{} 에 다음을 추가하세요:\n\n[[repo]]\npath = \"~/dev/my-repo\"", path.display());
@@ -194,20 +227,22 @@ fn open_registry(handle: &AppHandle) -> Result<Registry, String> {
             let _ = updated.emit("worktrees-updated", ());
         }),
     };
-    // 봤음 상태는 data dir(config 파일이 있는 폴더)에 둔다. 열 수 없으면 이번 실행만 메모리에 둔다
+    // 상태는 data dir(config 파일이 있는 폴더)에 둔다. 열 수 없으면 이번 실행만 메모리에 둔다
     let state_path = data.join("state.sqlite");
-    let (viewed, warning) = match ViewedStore::open(&state_path) {
-        Ok(store) => (store, None),
-        Err(e) => (
-            ViewedStore::in_memory(),
-            Some(EntryError {
-                path: state_path.display().to_string(),
-                message: format!("봤음 상태를 저장할 수 없음: {e}"),
-            }),
-        ),
-    };
+    let (viewed, viewed_warning) =
+        open_or_memory(&state_path, "봤음 상태를 저장할 수 없음", ViewedStore::open, ViewedStore::in_memory);
+    let (comments, comments_warning) =
+        open_or_memory(&state_path, "코멘트를 저장할 수 없음", CommentStore::open, CommentStore::in_memory);
+    let (settings, settings_warning) =
+        open_or_memory(&state_path, "설정을 저장할 수 없음", SettingsStore::open, SettingsStore::in_memory);
+    // 전송된 지 오래된 코멘트를 지운다
+    let cutoff = now_ms().saturating_sub(config.sessions.keep_days.saturating_mul(86_400_000));
+    let _ = comments.purge_sent_before(cutoff);
+    let state = handle.state::<AppState>();
+    let _ = state.comments.set(Arc::new(comments));
+    let _ = state.settings.set(settings);
     let mut reg = Registry::open(&config, Gh::detect(), Arc::new(viewed), sink);
-    if let Some(w) = warning {
+    for w in [viewed_warning, comments_warning, settings_warning].into_iter().flatten() {
         reg.warn(w);
     }
     let sessions = sessions_dir(&data);
@@ -227,6 +262,8 @@ fn main() {
                 registry: OnceLock::new(),
                 sessions_watch: OnceLock::new(),
                 session_cache: SessionViewCache::default(),
+                comments: OnceLock::new(),
+                settings: OnceLock::new(),
             });
             let handle = app.handle().clone();
             // 레포가 많거나 크면 수 초 걸린다. 창을 막지 않는다
@@ -236,7 +273,20 @@ fn main() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![list_repos, list_sessions, list_files, get_patch, set_viewed])
+        .invoke_handler(tauri::generate_handler![
+            list_repos,
+            list_sessions,
+            list_files,
+            get_patch,
+            set_viewed,
+            comments::list_comments,
+            comments::add_comment,
+            comments::update_comment,
+            comments::delete_comment,
+            comments::clear_sent_comments,
+            comments::copy_comments,
+            comments::mark_comments_sent,
+        ])
         .run(tauri::generate_context!())
         .expect("wtboard 실행 실패");
 }
