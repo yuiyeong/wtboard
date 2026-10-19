@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { listFiles, type RepoSummary, type WorktreeSummary } from '../api';
 import { worktreeLabel } from '../lib/selection';
+import { filesKey } from '../lib/sessions';
 import { buildTree, flattenFiles, splitCollapsed, type TreeNode } from '../lib/tree';
 import { viewedProgress } from '../lib/viewed';
 import { useUiStore } from '../store';
@@ -24,8 +25,8 @@ export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: 
   const viewType = useUiStore((s) => s.viewType);
   const setViewType = useUiStore((s) => s.setViewType);
   const files = useQuery({
-    queryKey: ['files', worktree.id, 'branch'],
-    queryFn: () => listFiles(worktree.id, 'branch'),
+    queryKey: filesKey(worktree.id, 'branch', null),
+    queryFn: () => listFiles(worktree.id, 'branch', null),
   });
   const { onSetViewed, error: viewedError } = useSetViewed(worktree.id);
   const progress = useMemo(() => viewedProgress(files.data ?? []), [files.data]);

@@ -16,6 +16,8 @@ export interface ChangedFile {
   /** 생성·lock 파일. 펼치기 전에는 diff를 계산하지 않는다 */
   collapsed: boolean;
   viewed: ViewedState;
+  /** session·turn view에서 원본(기준 내용)을 알 수 없어 diff가 부정확할 수 있다 */
+  uncertain: boolean;
 }
 
 export type PatchBody =
@@ -44,6 +46,8 @@ export interface WorktreeSummary {
   /** 목록 계산이 느릴 때만 값이 있다 */
   slowListMs: number | null;
   fsmonitor: boolean;
+  /** 이 worktree에 지금 활동 중인 Claude Code 세션이 있다 */
+  activeSession: boolean;
   /** 열지 못한 이유 */
   error: string | null;
 }
@@ -65,7 +69,27 @@ export interface ReposResponse {
   errors: EntryError[];
 }
 
-export type View = 'branch';
+/** branch: 브랜치 전체, session: 이번 세션, turn: 마지막 응답 */
+export type View = 'branch' | 'session' | 'turn';
+
+export interface SessionSummary {
+  id: string;
+  /** Unix ms */
+  startedAt: number;
+  /** Unix ms. 목록은 이 값의 내림차순 */
+  lastEventAt: number;
+  active: boolean;
+  /** "마지막 응답" view가 보여 주는 turn 번호 */
+  turn: number;
+  /** 그 turn이 아직 끝나지 않았다 */
+  turnOpen: boolean;
+  touchedFiles: number;
+}
+
+export interface SessionUpdated {
+  sessionIds: string[];
+  worktreeIds: string[];
+}
 
 export interface WorktreeChanged {
   worktreeId: string;
@@ -75,11 +99,15 @@ export interface WorktreeChanged {
 
 export const listRepos = () => invoke<ReposResponse>('list_repos');
 
-export const listFiles = (worktreeId: string, view: View) =>
-  invoke<ChangedFile[]>('list_files', { worktreeId, view });
+export const listSessions = (worktreeId: string) =>
+  invoke<SessionSummary[]>('list_sessions', { worktreeId });
 
-export const getPatch = (worktreeId: string, view: View, path: string) =>
-  invoke<FilePatch>('get_patch', { worktreeId, view, path });
+/** `sessionId`는 branch view에서 null, session·turn view에서 필수 */
+export const listFiles = (worktreeId: string, view: View, sessionId: string | null) =>
+  invoke<ChangedFile[]>('list_files', { worktreeId, view, sessionId });
+
+export const getPatch = (worktreeId: string, view: View, path: string, sessionId: string | null) =>
+  invoke<FilePatch>('get_patch', { worktreeId, view, path, sessionId });
 
 export const setViewed = (worktreeId: string, path: string, viewed: boolean, hash: string | null) =>
   invoke<void>('set_viewed', { worktreeId, path, viewed, hash });

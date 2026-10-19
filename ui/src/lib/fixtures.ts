@@ -14,6 +14,7 @@ export function worktreeFixture(overrides: Partial<WorktreeSummary> = {}): Workt
     lastChangedAt: null,
     slowListMs: null,
     fsmonitor: false,
+    activeSession: false,
     error: null,
     ...overrides,
   };
@@ -28,6 +29,7 @@ export function fileFixture(overrides: Partial<ChangedFile> = {}): ChangedFile {
     deletions: 0,
     collapsed: false,
     viewed: 'none',
+    uncertain: false,
     ...overrides,
   };
 }

@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { setViewed } from './api';
 import type { ChangedFile } from './api';
+import { filesKey } from './lib/sessions';
 import { viewedErrorText, withViewed } from './lib/viewed';
 
 interface Vars {
@@ -17,19 +18,19 @@ interface Vars {
  */
 export function useSetViewed(worktreeId: string) {
   const queryClient = useQueryClient();
-  const filesKey = ['files', worktreeId, 'branch'];
+  const branchKey = filesKey(worktreeId, 'branch', null);
   const [error, setError] = useState<string | null>(null);
   const { mutate } = useMutation({
     mutationFn: ({ file, viewed, hash }: Vars) => setViewed(worktreeId, file.path, viewed, hash),
     onMutate: async ({ file, viewed }) => {
-      await queryClient.cancelQueries({ queryKey: filesKey });
-      const previous = queryClient.getQueryData<ChangedFile[]>(filesKey);
-      if (previous) queryClient.setQueryData(filesKey, withViewed(previous, file.path, viewed));
+      await queryClient.cancelQueries({ queryKey: branchKey });
+      const previous = queryClient.getQueryData<ChangedFile[]>(branchKey);
+      if (previous) queryClient.setQueryData(branchKey, withViewed(previous, file.path, viewed));
       return { previous };
     },
     onError: (error, _vars, context) => {
       console.error('set_viewed 실패', error);
-      if (context?.previous) queryClient.setQueryData(filesKey, context.previous);
+      if (context?.previous) queryClient.setQueryData(branchKey, context.previous);
       setError(viewedErrorText(error));
     },
     onSuccess: () => setError(null),

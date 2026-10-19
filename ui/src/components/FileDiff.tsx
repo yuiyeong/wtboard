@@ -5,6 +5,7 @@ import { getPatch, type ChangedFile, type PatchBody } from '../api';
 import { fileAnchorId } from '../lib/anchor';
 import { tokenizeHunks } from '../lib/highlight';
 import { languageForPath } from '../lib/language';
+import { patchKey } from '../lib/sessions';
 import { useInView } from '../lib/useInView';
 import { initiallyOpen, nextOpen } from '../lib/viewed';
 import type { ViewType } from '../store';
@@ -31,8 +32,8 @@ export const FileDiff = memo(function FileDiff({ worktreeId, file, viewType, onS
     setOpen((open) => nextOpen(prev, file.viewed, open));
   }, [file.viewed]);
   const patch = useQuery({
-    queryKey: ['patch', worktreeId, file.path, 'branch'],
-    queryFn: () => getPatch(worktreeId, 'branch', file.path),
+    queryKey: patchKey(worktreeId, file.path, 'branch', null),
+    queryFn: () => getPatch(worktreeId, 'branch', file.path, null),
     enabled: inView && open, // 화면에 보이고 펼쳐져 있을 때만 계산
   });
 
