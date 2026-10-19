@@ -87,11 +87,11 @@ pub fn worktrees_of(dir: &SessionDir, roots: &[PathBuf]) -> Vec<PathBuf> {
     roots.iter().filter(|r| owned.contains(r.as_path())).cloned().collect()
 }
 
-/// 활성 세션이 있는 worktree. meta와 mtime만 먼저 보고 활성인 세션만 events를 읽는다
+/// 활성 세션이 있는 worktree. mtime을 먼저 보고 최근 세션만 meta를, 활성인 세션만 events를 읽는다
 pub fn active_roots(data_dir: &Path, roots: &[PathBuf], now: u64) -> HashSet<PathBuf> {
     session_dirs(data_dir)
         .iter()
-        .filter(|dir| last_activity(dir).is_some_and(|last| is_active(dir.read_meta().as_ref(), last, now)))
+        .filter(|dir| last_activity(dir).is_some_and(|last| is_recent(last, now)) && !is_ended(dir.read_meta().as_ref()))
         .flat_map(|dir| worktrees_of(dir, roots))
         .collect()
 }
@@ -128,7 +128,15 @@ fn last_activity(dir: &SessionDir) -> Option<u64> {
 }
 
 fn is_active(meta: Option<&Meta>, last: u64, now: u64) -> bool {
-    meta.is_none_or(|m| m.ended_at.is_none()) && now.saturating_sub(last) <= ACTIVE_WINDOW_MS
+    is_recent(last, now) && !is_ended(meta)
+}
+
+fn is_recent(last: u64, now: u64) -> bool {
+    now.saturating_sub(last) <= ACTIVE_WINDOW_MS
+}
+
+fn is_ended(meta: Option<&Meta>) -> bool {
+    meta.is_some_and(|m| m.ended_at.is_some())
 }
 
 /// 파일 event(`Edit`, `Bash`)의 경로

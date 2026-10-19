@@ -9,6 +9,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+use std::time::SystemTime;
 
 use super::list::{target_turn, touched, with_root, Touch};
 use super::{Baseline, BaselineKind, SessionDir, Snapshot, TurnIndex};
@@ -102,6 +105,87 @@ impl Side {
     }
 }
 
+/// 내용 파일 하나의 (경로, 크기, mtime). 이것이 그대로면 내용도 그대로라고 본다
+type FileKey = (PathBuf, u64, SystemTime);
+
+/// cache가 이보다 커지면 비운다 (오래된 세션·worktree의 항목이 쌓이지 않게)
+const CACHE_CAP: usize = 4096;
+
+/// before·after 비교 결과
+#[derive(Debug, Clone, Copy)]
+struct Compared {
+    same: bool,
+    /// `same`이 아닐 때 처음 물으면 채운다
+    numstat: Option<Lines>,
+}
+
+type Lines = (Option<u32>, Option<u32>);
+
+/// 파일 쌍의 비교 결과 (같은지, 줄 수). 앱이 하나를 들고 매번 `changes`에 넘긴다.
+/// 양쪽 내용 파일의 (경로, 크기, mtime)이 그대로면 파일을 다시 읽거나 `git diff`를 부르지 않는다
+/// (목록은 파일이 바뀔 때마다 다시 계산하는데, 바뀐 파일은 대개 하나다)
+#[derive(Debug, Default)]
+pub struct SessionViewCache {
+    entries: Mutex<HashMap<(Option<FileKey>, Option<FileKey>), Compared>>,
+    computed: AtomicUsize,
+}
+
+impl SessionViewCache {
+    /// 지금까지 실제로 한 비교 (내용 읽기, `git diff`) 수. cache를 거친 것은 세지 않는다
+    pub fn computed(&self) -> usize {
+        self.computed.load(Ordering::Relaxed)
+    }
+
+    /// `same_as`. 1MB 초과 쪽이 있으면 크기·hash만 비교하므로 cache를 쓰지 않는다
+    fn same(&self, before: &Side, after: &Side) -> io::Result<bool> {
+        let Some(key) = key(before, after) else { return before.same_as(after) };
+        if let Some(c) = self.get(&key) {
+            return Ok(c.same);
+        }
+        let same = before.same_as(after)?;
+        self.put(key, Compared { same, numstat: None });
+        Ok(same)
+    }
+
+    /// 두 내용 파일의 `git diff --no-index --numstat`. 오류는 cache하지 않는다
+    fn numstat(&self, git: &crate::git::Git, before: &Side, after: &Side) -> Result<Lines, crate::git::GitError> {
+        let run = || no_index_numstat(git, before.content.as_deref(), after.content.as_deref());
+        let Some(key) = key(before, after) else { return run() };
+        if let Some(numstat) = self.get(&key).and_then(|c| c.numstat) {
+            return Ok(numstat);
+        }
+        let numstat = run()?;
+        self.put(key, Compared { same: false, numstat: Some(numstat) });
+        Ok(numstat)
+    }
+
+    fn get(&self, key: &(Option<FileKey>, Option<FileKey>)) -> Option<Compared> {
+        self.entries.lock().unwrap_or_else(|e| e.into_inner()).get(key).copied()
+    }
+
+    fn put(&self, key: (Option<FileKey>, Option<FileKey>), value: Compared) {
+        self.computed.fetch_add(1, Ordering::Relaxed);
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        if entries.len() >= CACHE_CAP {
+            entries.clear();
+        }
+        entries.insert(key, value);
+    }
+}
+
+/// cache key. 1MB 초과 쪽이 있거나 파일 정보를 못 읽으면 `None` (cache하지 않는다)
+fn key(before: &Side, after: &Side) -> Option<(Option<FileKey>, Option<FileKey>)> {
+    if before.too_large || after.too_large {
+        return None;
+    }
+    let file = |side: &Side| -> io::Result<Option<FileKey>> {
+        let Some(path) = &side.content else { return Ok(None) };
+        let meta = fs::metadata(path)?;
+        Ok(Some((path.clone(), meta.len(), meta.modified()?)))
+    };
+    Some((file(before).ok()?, file(after).ok()?))
+}
+
 /// view에 들어가는 파일 하나
 struct Item {
     before: Side,
@@ -112,14 +196,16 @@ struct Item {
 /// 경로순 변경 목록. status는 양쪽 유무로, 줄 수는 `git diff --no-index --numstat`으로 정한다.
 /// 접기는 브랜치 view와 같은 규칙 (profile pattern, `linguist-generated`).
 /// 읽지 못한 파일은 줄 수 없이 `uncertain`으로 남긴다 (patch를 열면 그 오류가 보인다).
-/// `all_roots`는 열려 있는 모든 worktree root (안쪽 worktree의 파일을 빼는 데 쓴다)
+/// `all_roots`는 열려 있는 모든 worktree root (안쪽 worktree의 파일을 빼는 데 쓴다).
+/// `cache`는 호출 사이에 같은 것을 넘긴다
 pub fn changes(
     dir: &SessionDir,
     view: SessionView,
     wt: &Worktree,
     all_roots: &[PathBuf],
+    cache: &SessionViewCache,
 ) -> Result<Vec<FileEntry>, WorktreeError> {
-    let items = items(dir, view, wt, all_roots, None);
+    let items = items(dir, view, wt, all_roots, None, cache);
     let git = wt.git();
     let rels: Vec<&str> = items.iter().map(|(rel, _)| rel.as_str()).collect();
     // check-attr가 실패해도 목록은 보여 준다. 생성 파일이 아닌 것으로 본다
@@ -135,8 +221,7 @@ pub fn changes(
                     let (additions, deletions) = if item.before.too_large || item.after.too_large {
                         (None, None)
                     } else {
-                        let (before, after) = (item.before.content.as_deref(), item.after.content.as_deref());
-                        no_index_numstat(git, before, after).unwrap_or_else(|e| {
+                        cache.numstat(git, &item.before, &item.after).unwrap_or_else(|e| {
                             warn(&rel, &e);
                             (None, None)
                         })
@@ -172,7 +257,7 @@ pub fn patch(
     all_roots: &[PathBuf],
 ) -> Result<FilePatch, WorktreeError> {
     let (_, item) =
-        items(dir, view, wt, all_roots, Some(rel)).pop().ok_or_else(|| WorktreeError::UnknownFile(rel.to_owned()))?;
+        items(dir, view, wt, all_roots, Some(rel), &SessionViewCache::default()).pop().ok_or_else(|| WorktreeError::UnknownFile(rel.to_owned()))?;
     let item = item?;
     if !(item.before.too_large || item.after.too_large) {
         let (before, after) = (item.before.content.as_deref(), item.after.content.as_deref());
@@ -190,6 +275,7 @@ fn items(
     wt: &Worktree,
     all_roots: &[PathBuf],
     only: Option<&str>,
+    cache: &SessionViewCache,
 ) -> Vec<(String, io::Result<Item>)> {
     let root = &wt.layout().root;
     let events = dir.events();
@@ -209,7 +295,7 @@ fn items(
     for t in &touches {
         turns_of.entry(t.rel.as_str()).or_default().insert(t.turn);
     }
-    let mut cx = Context { dir, root, turns_of, baselines: dir.baselines(), turns: HashMap::new() };
+    let mut cx = Context { dir, root, turns_of, baselines: dir.baselines(), turns: HashMap::new(), cache };
     targets
         .into_iter()
         .filter_map(|(rel, touch)| match cx.item(turn, touch) {
@@ -229,6 +315,7 @@ struct Context<'a> {
     baselines: HashMap<PathBuf, Baseline>,
     /// turn별 index는 한 번만 읽는다
     turns: HashMap<u32, TurnIndex>,
+    cache: &'a SessionViewCache,
 }
 
 impl Context<'_> {
@@ -254,7 +341,7 @@ impl Context<'_> {
             Some(s) => Side::snapshot(s),
             None => Side::current(&self.root.join(&touch.rel))?,
         };
-        Ok((!before.same_as(&after)?).then_some(Item { before, after, uncertain }))
+        Ok((!self.cache.same(&before, &after)?).then_some(Item { before, after, uncertain }))
     }
 
     fn snapshot(&mut self, turn: u32, abs: &Path) -> Option<Snapshot> {

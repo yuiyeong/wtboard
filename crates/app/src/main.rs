@@ -9,7 +9,7 @@ use wtboard_core::gh::Gh;
 use wtboard_core::registry::{EntryError, Registry};
 use wtboard_core::repo::{RepoSummary, Sink};
 use wtboard_core::session::list::{active_roots, cleanup, sessions_for, worktrees_of, SessionSummary};
-use wtboard_core::session::view::{self, SessionView};
+use wtboard_core::session::view::{self, SessionView, SessionViewCache};
 use wtboard_core::session::{sessions_dir, SessionDir};
 use wtboard_core::store::config::Config;
 use wtboard_core::store::data_dir;
@@ -22,6 +22,8 @@ struct AppState {
     registry: OnceLock<Result<Registry, String>>,
     /// 세션 기록 감시. registry를 열 때 시작한다 (바뀐 세션의 worktree를 정하려면 root 목록이 필요하다)
     sessions_watch: OnceLock<SessionsWatchHandle>,
+    /// 세션 view 목록의 파일 비교 결과. 목록을 다시 계산할 때 바뀌지 않은 파일은 비교하지 않는다
+    session_cache: SessionViewCache,
 }
 
 #[derive(Serialize)]
@@ -74,7 +76,10 @@ async fn list_files(
         let wt = worktree(&app, &worktree_id)?;
         match view {
             View::Branch => Ok(wt.entries()),
-            View::Session(dir, v) => view::changes(&dir, v, &wt, &registry(&app)?.roots()).map_err(|e| e.to_string()),
+            View::Session(dir, v) => {
+                let cache = &app.state::<AppState>().inner().session_cache;
+                view::changes(&dir, v, &wt, &registry(&app)?.roots(), cache).map_err(|e| e.to_string())
+            }
         }
     })
     .await
@@ -218,7 +223,11 @@ fn open_registry(handle: &AppHandle) -> Result<Registry, String> {
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
-            app.manage(AppState { registry: OnceLock::new(), sessions_watch: OnceLock::new() });
+            app.manage(AppState {
+                registry: OnceLock::new(),
+                sessions_watch: OnceLock::new(),
+                session_cache: SessionViewCache::default(),
+            });
             let handle = app.handle().clone();
             // 레포가 많거나 크면 수 초 걸린다. 창을 막지 않는다
             std::thread::spawn(move || {

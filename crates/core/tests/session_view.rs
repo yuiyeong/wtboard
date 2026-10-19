@@ -8,7 +8,7 @@ use std::time::{Duration, UNIX_EPOCH};
 use common::{feat_repo, TestRepo};
 use wtboard_core::domain::{FileStatus, PatchBody, MAX_DIFF_BYTES};
 use wtboard_core::session::list::{active_roots, cleanup, sessions_for, worktrees_of, ACTIVE_WINDOW_MS};
-use wtboard_core::session::view::{changes, patch, SessionView};
+use wtboard_core::session::view::{changes, patch, SessionView, SessionViewCache};
 use wtboard_core::session::{BaselineContent, Event, EventKind, Meta, SessionDir};
 use wtboard_core::worktree::{FileEntry, Worktree, WorktreeError};
 
@@ -21,6 +21,7 @@ struct Fx {
     data: tempfile::TempDir,
     wt: Arc<Worktree>,
     dir: SessionDir,
+    cache: SessionViewCache,
 }
 
 fn setup() -> Fx {
@@ -28,7 +29,7 @@ fn setup() -> Fx {
     let wt = Worktree::open(repo.path(), Some("main".into())).unwrap();
     let data = tempfile::tempdir().unwrap();
     let dir = SessionDir::open(data.path(), "s1").unwrap();
-    let fx = Fx { repo, data, wt, dir };
+    let fx = Fx { repo, data, wt, dir, cache: SessionViewCache::default() };
     fx.set_turn(0, false);
     fx
 }
@@ -84,7 +85,7 @@ impl Fx {
     }
 
     fn changes(&self, view: SessionView) -> Vec<FileEntry> {
-        changes(&self.dir, view, &self.wt, &self.roots()).unwrap()
+        changes(&self.dir, view, &self.wt, &self.roots(), &self.cache).unwrap()
     }
 
     fn paths(&self, view: SessionView) -> Vec<String> {
@@ -147,6 +148,31 @@ fn session_view_modified_added_deleted() {
     );
     let diff = fx.diff(SessionView::Session, "src/b.py");
     assert!(diff.contains("deleted file mode") && diff.contains("-b = 1"), "{diff}");
+}
+
+/// 양쪽 파일의 (경로, 크기, mtime)이 그대로면 다음 목록은 파일을 다시 비교하지 않는다 (`git diff` 프로세스 없음)
+#[test]
+fn unchanged_files_are_not_compared_again() {
+    let fx = setup();
+    fx.edit(0, "src/a.py", "a = 2\n");
+    fx.edit(0, "new.py", "n = 1\n");
+    // 되돌린 파일도 비교 결과(같음)를 기억한다
+    fx.edit(0, "src/b.py", "b = 2\n");
+    fx.repo.write("src/b.py", "b = 1\n");
+    let first = fx.paths(SessionView::Session);
+    assert_eq!(first, vec!["new.py", "src/a.py"]);
+    let computed = fx.cache.computed();
+    assert!(computed > 0);
+
+    assert_eq!(fx.paths(SessionView::Session), first);
+    assert_eq!(fx.cache.computed(), computed);
+
+    // 파일이 바뀌면 그 파일만 다시 계산한다
+    fx.repo.write("src/a.py", "a = 3\na = 4\n");
+    let a = fx.changes(SessionView::Session).into_iter().find(|e| e.file.path == "src/a.py").unwrap();
+    assert_eq!((a.file.additions, a.file.deletions), (Some(2), Some(1)));
+    assert!(fx.cache.computed() > computed);
+    assert!(fx.cache.computed() <= computed + 2);
 }
 
 #[test]
@@ -551,7 +577,7 @@ fn nested_worktree_owns_its_paths() {
     s2.append_event(&ev).unwrap();
 
     let paths = |dir: &SessionDir, wt: &Worktree| -> Vec<String> {
-        changes(dir, SessionView::Session, wt, &roots).unwrap().into_iter().map(|e| e.file.path).collect()
+        changes(dir, SessionView::Session, wt, &roots, &fx.cache).unwrap().into_iter().map(|e| e.file.path).collect()
     };
     assert_eq!(paths(&fx.dir, &fx.wt), vec!["src/a.py"]);
     assert_eq!(paths(&fx.dir, &nested), vec!["src/b.py"]);
