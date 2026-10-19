@@ -28,5 +28,5 @@ export function countLabel(w: WorktreeSummary): string {
 
 /** 봤음 저장 실패 표시. Tauri command는 문자열로 reject한다 */
 export function viewedErrorText(error: unknown): string {
-  return `봤음 저장 실패: ${error instanceof Error ? error.message : String(error)}`;
+  return `봤음 저장 실패: ${String(error)}`;
 }

@@ -91,8 +91,4 @@ describe('viewedErrorText', () => {
   it('Tauri command가 돌려준 문자열 오류를 그대로 붙인다', () => {
     expect(viewedErrorText('변경 목록에 없는 파일: a.py')).toBe('봤음 저장 실패: 변경 목록에 없는 파일: a.py');
   });
-
-  it('Error는 message를 쓴다', () => {
-    expect(viewedErrorText(new Error('disk full'))).toBe('봤음 저장 실패: disk full');
-  });
 });
