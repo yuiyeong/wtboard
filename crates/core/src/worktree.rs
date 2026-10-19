@@ -249,15 +249,13 @@ impl Worktree {
             return Ok(());
         }
         let file = st.files.get(path).ok_or_else(|| WorktreeError::UnknownFile(path.to_owned()))?;
-        let fresh = match st.hashes.get(path) {
-            Some(_) => None,
-            None => Some(file_patch(&self.git, &st.merge_base, file)?.hash),
+        let known = match st.hashes.get(path) {
+            Some(h) => h.clone(),
+            None => file_patch(&self.git, &st.merge_base, file)?.hash,
         };
-        let stored = hash.or_else(|| fresh.clone()).unwrap_or_else(|| st.hashes[path].clone());
+        let stored = hash.unwrap_or_else(|| known.clone());
         self.viewed.set(&self.id, &st.branch_key, path, &stored)?;
-        if let Some(h) = fresh {
-            st.hashes.insert(path.to_owned(), h);
-        }
+        st.hashes.entry(path.to_owned()).or_insert(known);
         st.viewed.insert(path.to_owned(), stored);
         Ok(())
     }
