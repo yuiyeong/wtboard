@@ -237,8 +237,10 @@ impl Worktree {
             .collect()
     }
 
-    /// 봤음 체크(`viewed = true`)나 해제. 체크할 때 `hash`(화면이 본 patch의 hash)가 없으면 지금 diff의 hash를 저장한다.
-    /// 화면이 본 hash가 그사이 바뀐 diff의 것이면 바로 다시 바뀜으로 보인다. 저장에 실패하면 상태는 그대로다
+    /// 봤음 체크(`viewed = true`)나 해제. 저장할 hash: `hash`(화면이 본 patch의 hash) → 없으면 `hashes`에 있는 hash
+    /// → 그것도 없으면 지금 diff의 hash. 화면이 본 hash가 그사이 바뀐 diff의 것이면 바로 다시 바뀜으로 보인다.
+    /// `hashes`는 화면이 아는 hash이므로 이미 있으면 덮지 않는다 (덮으면 처리 전 FS event의 변경을 놓친다).
+    /// 저장에 실패하면 상태는 그대로다
     pub fn set_viewed(&self, path: &str, viewed: bool, hash: Option<String>) -> Result<(), WorktreeError> {
         let mut st = self.state.lock().unwrap();
         if !viewed {
@@ -247,10 +249,15 @@ impl Worktree {
             return Ok(());
         }
         let file = st.files.get(path).ok_or_else(|| WorktreeError::UnknownFile(path.to_owned()))?;
-        let current = file_patch(&self.git, &st.merge_base, file)?.hash;
-        let stored = hash.unwrap_or_else(|| current.clone());
+        let fresh = match st.hashes.get(path) {
+            Some(_) => None,
+            None => Some(file_patch(&self.git, &st.merge_base, file)?.hash),
+        };
+        let stored = hash.or_else(|| fresh.clone()).unwrap_or_else(|| st.hashes[path].clone());
         self.viewed.set(&self.id, &st.branch_key, path, &stored)?;
-        st.hashes.insert(path.to_owned(), current);
+        if let Some(h) = fresh {
+            st.hashes.insert(path.to_owned(), h);
+        }
         st.viewed.insert(path.to_owned(), stored);
         Ok(())
     }

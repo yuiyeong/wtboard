@@ -65,6 +65,20 @@ fn check_with_stale_hash_is_changed() {
     assert_eq!(wt.summary().unviewed_files, 1);
 }
 
+/// 화면이 본 뒤 바뀌었는데 FS event보다 체크가 먼저 온 경우: 체크가 화면이 아는 hash를 덮지 않으므로 event가 나간다
+#[test]
+fn check_before_pending_event_still_emits() {
+    let repo = feat_repo();
+    repo.write("src/a.py", "a = 2\n");
+    let wt = open(&repo);
+    let h1 = wt.patch("src/a.py").unwrap().hash;
+    repo.write("src/a.py", "a = 3\n"); // +1/-1, status M 그대로
+    wt.set_viewed("src/a.py", true, Some(h1)).unwrap();
+    let ev = wt.handle(&[Target::File("src/a.py".into())]).unwrap().expect("hash change should emit");
+    assert_eq!((ev.scope, ev.changed_paths), (ChangeScope::File, vec!["src/a.py".to_string()]));
+    assert_eq!(state(&wt, "src/a.py"), ViewedState::Changed);
+}
+
 #[test]
 fn uncheck_returns_to_none() {
     let repo = feat_repo();
