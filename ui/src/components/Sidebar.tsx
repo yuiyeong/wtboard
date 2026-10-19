@@ -43,6 +43,11 @@ export function Sidebar({ repos, errors, selectedId, onSelect }: Props) {
                         </span>
                       )}
                       <span className="flex-1 truncate font-mono text-xs">{worktreeLabel(w)}</span>
+                      {w.unsentComments > 0 && (
+                        <span className="text-xs text-blue-600 tabular-nums" title="미전송 코멘트">
+                          💬{w.unsentComments}
+                        </span>
+                      )}
                       {!w.error && (
                         <span
                           className={`text-xs tabular-nums ${w.unviewedFiles > 0 ? 'text-gray-800' : 'text-gray-500'}`}

@@ -30,7 +30,12 @@ export function App() {
       ) : current.worktree.error ? (
         <WorktreeError worktree={current.worktree} />
       ) : (
-        <WorktreeView key={current.worktree.id} repo={current.repo} worktree={current.worktree} />
+        <WorktreeView
+          key={current.worktree.id}
+          repo={current.repo}
+          worktree={current.worktree}
+          autoAttachComments={repos.data.autoAttachComments}
+        />
       )}
     </div>
   );

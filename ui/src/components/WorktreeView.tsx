@@ -1,12 +1,23 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { listFiles, listSessions, type RepoSummary, type View, type WorktreeSummary } from '../api';
+import {
+  listFiles,
+  listSessions,
+  type Comment,
+  type NewComment,
+  type RepoSummary,
+  type View,
+  type WorktreeSummary,
+} from '../api';
+import { byPath, unsentByPath } from '../lib/comments';
 import { worktreeLabel } from '../lib/selection';
 import { effectiveView, filesKey, pickSession } from '../lib/sessions';
 import { buildTree, flattenFiles, splitCollapsed, type TreeNode } from '../lib/tree';
 import { viewedProgress } from '../lib/viewed';
 import { useUiStore } from '../store';
+import { useCommentActions, useComments } from '../useComments';
 import { useSetViewed } from '../useSetViewed';
+import { CommentsPopover } from './CommentsPopover';
 import { FileDiff } from './FileDiff';
 import { FileTree } from './FileTree';
 import { FsmonitorBanner } from './FsmonitorBanner';
@@ -14,6 +25,9 @@ import { ViewTabs } from './ViewTabs';
 
 /** 생성·lock 파일을 모아 두는 가짜 디렉터리. 실제 경로와 겹치지 않게 NUL로 시작한다 */
 const COLLAPSED_DIR = '\0collapsed';
+
+/** 코멘트가 없는 파일에 넘기는 빈 배열. 매번 새 배열을 만들면 FileDiff memo가 깨진다 */
+const NO_COMMENTS: Comment[] = [];
 
 const EMPTY_TEXT: Record<View, string> = {
   branch: 'base 대비 변경 사항이 없습니다.',
@@ -28,7 +42,14 @@ function underCollapsedDir(nodes: TreeNode[]): TreeNode[] {
   );
 }
 
-export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: WorktreeSummary }) {
+interface Props {
+  repo: RepoSummary;
+  worktree: WorktreeSummary;
+  /** config의 자동 첨부. 꺼져 있으면 코멘트 목록에 복사 안내를 보인다 */
+  autoAttachComments: boolean;
+}
+
+export function WorktreeView({ repo, worktree, autoAttachComments }: Props) {
   const viewType = useUiStore((s) => s.viewType);
   const setViewType = useUiStore((s) => s.setViewType);
   const chosenView = useUiStore((s) => s.views[worktree.id] ?? 'branch');
@@ -55,6 +76,20 @@ export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: 
     }
     return { tree, ordered: flattenFiles(tree) }; // diff 순서를 트리와 맞춘다. 접힌 파일은 맨 뒤
   }, [files.data]);
+  const listedPaths = useMemo(() => new Set(files.data?.map((f) => f.path)), [files.data]);
+
+  const comments = useComments(worktree.id);
+  const commentList = comments.data ?? NO_COMMENTS;
+  const commentsByPath = useMemo(() => byPath(commentList), [commentList]);
+  const unsentPaths = useMemo(() => unsentByPath(commentList), [commentList]);
+  // mutateAsync는 참조가 안정적이라 FileDiff memo를 깨지 않는다
+  const { add, update, remove } = useCommentActions(worktree.id);
+  const { mutateAsync: addAsync } = add;
+  const { mutateAsync: updateAsync } = update;
+  const { mutateAsync: removeAsync } = remove;
+  const onAddComment = useCallback((c: NewComment) => addAsync(c), [addAsync]);
+  const onUpdateComment = useCallback((id: number, body: string) => updateAsync({ id, body }), [updateAsync]);
+  const onDeleteComment = useCallback((id: number) => removeAsync(id), [removeAsync]);
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -76,6 +111,12 @@ export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: 
             확인 {progress.viewed}/{progress.total}
           </span>
         )}
+        <CommentsPopover
+          worktreeId={worktree.id}
+          comments={commentList}
+          listedPaths={listedPaths}
+          autoAttach={autoAttachComments}
+        />
       </header>
       <div className="flex items-center gap-3 border-b border-gray-200 px-4 py-1.5 text-sm">
         <ViewTabs
@@ -102,7 +143,7 @@ export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: 
       <div className="flex min-h-0 flex-1">
         <aside className="w-80 shrink-0 overflow-y-auto border-r border-gray-200">
           <p className="px-3 py-2 text-xs text-gray-500">변경 파일 {files.data?.length ?? 0}개</p>
-          <FileTree nodes={tree} initiallyCollapsed={[COLLAPSED_DIR]} />
+          <FileTree nodes={tree} initiallyCollapsed={[COLLAPSED_DIR]} unsent={unsentPaths} />
         </aside>
         {/* 위쪽 padding을 두면 sticky 파일 헤더가 그만큼 아래에 멈추므로 spacer로 띄운다 */}
         <main className="flex-1 overflow-y-auto px-4 pb-4">
@@ -119,6 +160,10 @@ export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: 
               sessionId={sessionId}
               viewType={viewType}
               onSetViewed={onSetViewed}
+              comments={commentsByPath.get(f.path) ?? NO_COMMENTS}
+              onAdd={onAddComment}
+              onUpdate={onUpdateComment}
+              onDelete={onDeleteComment}
             />
           ))}
         </main>

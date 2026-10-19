@@ -92,3 +92,19 @@ export function unsentByPath(comments: Comment[]): Map<string, number> {
   for (const c of comments) if (c.sentAt === null) counts.set(c.path, (counts.get(c.path) ?? 0) + 1);
   return counts;
 }
+
+/** path별 코멘트 (입력 순서 유지). 파일 diff마다 자기 코멘트만 넘긴다 */
+export function byPath(comments: Comment[]): Map<string, Comment[]> {
+  const groups = new Map<string, Comment[]>();
+  for (const c of comments) {
+    const group = groups.get(c.path);
+    if (group) group.push(c);
+    else groups.set(c.path, [c]);
+  }
+  return groups;
+}
+
+/** 목록에 보일 body 한 줄: 내용이 있는 첫 줄 */
+export function firstLine(body: string): string {
+  return body.split('\n').find((line) => line.trim() !== '')?.trim() ?? '';
+}

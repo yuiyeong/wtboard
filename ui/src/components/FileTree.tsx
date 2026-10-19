@@ -26,8 +26,18 @@ const VIEWED_MARK: Record<ChangedFile['viewed'], { mark: string; color: string }
 
 const INDENT_PX = 14;
 
-/** `initiallyCollapsed`: 처음에 닫아 둘 디렉터리 path (접힌 파일 묶음) */
-export function FileTree({ nodes, initiallyCollapsed = [] }: { nodes: TreeNode[]; initiallyCollapsed?: string[] }) {
+const NO_UNSENT = new Map<string, number>();
+
+/** `initiallyCollapsed`: 처음에 닫아 둘 디렉터리 path (접힌 파일 묶음). `unsent`: path별 미전송 코멘트 수 */
+export function FileTree({
+  nodes,
+  initiallyCollapsed = [],
+  unsent = NO_UNSENT,
+}: {
+  nodes: TreeNode[];
+  initiallyCollapsed?: string[];
+  unsent?: Map<string, number>;
+}) {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(initiallyCollapsed));
   const toggle = (path: string) =>
     setCollapsed((prev) => {
@@ -38,7 +48,7 @@ export function FileTree({ nodes, initiallyCollapsed = [] }: { nodes: TreeNode[]
     });
   return (
     <ul className="text-sm">
-      <Nodes nodes={nodes} depth={0} collapsed={collapsed} toggle={toggle} />
+      <Nodes nodes={nodes} depth={0} collapsed={collapsed} toggle={toggle} unsent={unsent} />
     </ul>
   );
 }
@@ -48,14 +58,16 @@ interface NodesProps {
   depth: number;
   collapsed: Set<string>;
   toggle: (path: string) => void;
+  unsent: Map<string, number>;
 }
 
-function Nodes({ nodes, depth, collapsed, toggle }: NodesProps) {
+function Nodes({ nodes, depth, collapsed, toggle, unsent }: NodesProps) {
   const pad = { paddingLeft: 12 + depth * INDENT_PX };
   return nodes.map((node) => {
     if (node.kind === 'file') {
       const f = node.file;
       const viewed = VIEWED_MARK[f.viewed];
+      const comments = unsent.get(f.path) ?? 0;
       return (
         <li key={f.path}>
           <button
@@ -66,7 +78,13 @@ function Nodes({ nodes, depth, collapsed, toggle }: NodesProps) {
           >
             <span className={`w-3 shrink-0 text-xs ${viewed.color}`}>{viewed.mark}</span>
             <span className={`w-3 font-mono text-xs ${STATUS_COLOR[f.status]}`}>{STATUS_LABEL[f.status]}</span>
-            <span className={`flex-1 truncate ${f.viewed === 'viewed' ? 'text-gray-400' : ''}`}>{node.name}</span>
+            <span className={`truncate ${f.viewed === 'viewed' ? 'text-gray-400' : ''}`}>{node.name}</span>
+            {comments > 0 && (
+              <span className="shrink-0 text-xs" title={`미전송 코멘트 ${comments}개`}>
+                💬
+              </span>
+            )}
+            <span className="flex-1" />
             <LineCounts file={f} />
           </button>
         </li>
@@ -86,7 +104,7 @@ function Nodes({ nodes, depth, collapsed, toggle }: NodesProps) {
         </button>
         {!isCollapsed && (
           <ul>
-            <Nodes nodes={node.children} depth={depth + 1} collapsed={collapsed} toggle={toggle} />
+            <Nodes nodes={node.children} depth={depth + 1} collapsed={collapsed} toggle={toggle} unsent={unsent} />
           </ul>
         )}
       </li>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getChangeKey, parseDiff, type ChangeData } from 'react-diff-view';
-import { anchorOf, placeComments, sortForList, statusLabel, unsentByPath } from './comments';
+import { anchorOf, byPath, firstLine, placeComments, sortForList, statusLabel, unsentByPath } from './comments';
 import { commentFixture } from './fixtures';
 
 const DIFF = [
@@ -142,5 +142,30 @@ describe('unsentByPath', () => {
         ['c.ts', 1],
       ]),
     );
+  });
+});
+
+describe('byPath', () => {
+  it('path별로 묶고 입력 순서를 지킨다', () => {
+    const a1 = commentFixture({ id: 1, path: 'a.ts' });
+    const b = commentFixture({ id: 2, path: 'b.ts' });
+    const a2 = commentFixture({ id: 3, path: 'a.ts', sentAt: 1 });
+    expect(byPath([a1, b, a2])).toEqual(
+      new Map([
+        ['a.ts', [a1, a2]],
+        ['b.ts', [b]],
+      ]),
+    );
+  });
+});
+
+describe('firstLine', () => {
+  it('첫 줄만, 앞뒤 공백 없이', () => {
+    expect(firstLine('  고쳐 주세요  \n둘째 줄')).toBe('고쳐 주세요');
+    expect(firstLine('한 줄')).toBe('한 줄');
+  });
+
+  it('첫 줄이 비어 있으면 내용이 있는 첫 줄', () => {
+    expect(firstLine('\n\n  셋째 줄\n넷째')).toBe('셋째 줄');
   });
 });
