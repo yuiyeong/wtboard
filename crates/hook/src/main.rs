@@ -3,6 +3,7 @@
 //!
 //! 어떤 입력·오류에도 exit 0이고 stdout에는 아무것도 쓰지 않는다 (Claude Code가 stdout을 JSON으로
 //! 해석하고, exit 2는 tool 호출을 막는다). 오류는 stderr 한 줄.
+mod bash;
 mod edit;
 mod turn;
 
@@ -66,8 +67,8 @@ fn run(sub: &str) -> HookResult {
         "session-end" => turn::session_end,
         "pre-edit" => edit::pre_edit,
         "post-edit" => edit::post_edit,
-        // Task 3에서 채운다
-        "pre-bash" | "post-bash" => |_, _| Ok(()),
+        "pre-bash" => bash::pre_bash,
+        "post-bash" => bash::post_bash,
         _ => return Err(format!("모르는 subcommand: {sub:?}").into()),
     };
     let mut stdin = Vec::new();

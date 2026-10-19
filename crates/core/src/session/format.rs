@@ -5,6 +5,7 @@
 //! - `events.jsonl`: 줄 하나를 `O_APPEND` write 한 번으로
 //! - `baseline/<abs>`: `create_new`로 먼저 만든 쪽이 이긴다. 이긴 쪽만 `baseline.jsonl`에 한 줄 append
 //! - `turns/<n>/<abs>`, `turns/<n>/index.jsonl`: turn 경계 hook만 쓴다
+//! - `bash/<tool_use_id>.json`: pre-bash가 tmp에 쓰고 rename, 같은 tool 호출의 post-bash가 읽고 지운다
 //!
 //! 경로 key는 NFC 절대 경로다. 내용 파일은 절대 경로에서 앞의 `/`를 뗀 경로에 둔다.
 //!
@@ -29,6 +30,7 @@ const BASELINE_DIR: &str = "baseline";
 const BASELINES: &str = "baseline.jsonl";
 const TURNS: &str = "turns";
 const TURN_INDEX: &str = "index.jsonl";
+const BASH_DIR: &str = "bash";
 const DIR_MODE: u32 = 0o700;
 const FILE_MODE: u32 = 0o600;
 
@@ -263,6 +265,32 @@ impl SessionDir {
         }
         let file = mirror(&dir, &path);
         file.is_file().then_some(Snapshot::Content(file))
+    }
+
+    /// pre-bash의 git status 스냅샷을 저장한다. 내용 형식은 hook이 정한다
+    pub fn write_bash_snapshot(&self, tool_use_id: &str, bytes: &[u8]) -> io::Result<()> {
+        let file = self.bash_file(tool_use_id)?;
+        create_private_dir(&self.root.join(BASH_DIR))?;
+        write_atomic(&file, bytes)
+    }
+
+    /// pre-bash 스냅샷을 읽고 지운다. 없거나 id가 잘못됐으면 `None`
+    pub fn take_bash_snapshot(&self, tool_use_id: &str) -> Option<Vec<u8>> {
+        let file = self.bash_file(tool_use_id).ok()?;
+        let bytes = fs::read(&file).ok()?;
+        let _ = fs::remove_file(&file);
+        Some(bytes)
+    }
+
+    /// `tool_use_id`는 hook 입력에서 오므로 session id와 같은 규칙으로 걸러 파일 이름으로 쓴다
+    fn bash_file(&self, tool_use_id: &str) -> io::Result<PathBuf> {
+        if !is_valid_session_id(tool_use_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("잘못된 tool_use_id: {tool_use_id:?}"),
+            ));
+        }
+        Ok(self.root.join(BASH_DIR).join(format!("{tool_use_id}.json")))
     }
 
     fn turn_dir(&self, turn: u32) -> PathBuf {

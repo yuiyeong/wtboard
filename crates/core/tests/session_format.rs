@@ -377,8 +377,32 @@ fn session_files_are_private() {
     dir.snapshot_turn(1, &[secret.clone(), big.clone()]).unwrap();
     // 같은 turn을 다시 찍어도 (덮어쓰기) 그대로
     dir.snapshot_turn(1, &[secret.clone()]).unwrap();
+    dir.write_bash_snapshot("toolu_1", b"{}").unwrap();
 
     assert_private_tree(&data.path().join("sessions"));
     let Some(Snapshot::Content(snap)) = dir.turn_snapshot(1, &secret) else { panic!() };
     assert_eq!(fs::read_to_string(snap).unwrap(), "TOKEN=1\n");
+}
+
+#[test]
+fn bash_snapshot_write_take() {
+    let data = tempfile::tempdir().unwrap();
+    let dir = SessionDir::open(data.path(), "s1").unwrap();
+    assert_eq!(dir.take_bash_snapshot("toolu_1"), None);
+
+    dir.write_bash_snapshot("toolu_1", b"{\"a\":1}").unwrap();
+    dir.write_bash_snapshot("toolu_2", b"two").unwrap();
+    assert_eq!(dir.take_bash_snapshot("toolu_1").as_deref(), Some(&b"{\"a\":1}"[..]));
+    // 읽은 스냅샷은 지운다
+    assert_eq!(dir.take_bash_snapshot("toolu_1"), None);
+    assert_eq!(dir.take_bash_snapshot("toolu_2").as_deref(), Some(&b"two"[..]));
+    assert_eq!(fs::read_dir(dir.root().join("bash")).unwrap().count(), 0);
+
+    // 파일 이름으로 쓰므로 session id와 같은 규칙
+    for id in ["", "../x", "a/b", "a.json"] {
+        assert!(dir.write_bash_snapshot(id, b"x").is_err(), "{id:?}");
+        assert_eq!(dir.take_bash_snapshot(id), None, "{id:?}");
+    }
+    assert_eq!(fs::read_dir(dir.root().join("bash")).unwrap().count(), 0);
+    assert!(!data.path().join("sessions/x").exists());
 }

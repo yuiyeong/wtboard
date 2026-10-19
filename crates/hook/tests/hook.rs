@@ -485,3 +485,226 @@ fn session_records_are_private() {
         assert_eq!(mode(&p), want, "{}", p.display());
     }
 }
+
+fn bash_input(sid: &str, cwd: &Path, tool_use_id: Option<&str>) -> Value {
+    let mut input = with(
+        base(sid, cwd, "PreToolUse"),
+        json!({ "tool_name": "Bash", "tool_input": { "command": "make" } }),
+    );
+    if let Some(id) = tool_use_id {
+        input["tool_use_id"] = json!(id);
+    }
+    input
+}
+
+/// `pre-bash` → `run` → `post-bash`. Claude Code가 Bash tool 하나를 부를 때와 같다
+fn bash_with_id(data: &Path, sid: &str, cwd: &Path, tool_use_id: Option<&str>, run: impl FnOnce()) {
+    let input = bash_input(sid, cwd, tool_use_id);
+    assert_quiet_exit(&run_hook(data, "pre-bash", &input));
+    run();
+    assert_quiet_exit(&run_hook(data, "post-bash", &input));
+}
+
+fn bash(data: &Path, sid: &str, cwd: &Path, run: impl FnOnce()) {
+    bash_with_id(data, sid, cwd, Some("toolu_bash"), run);
+}
+
+/// session-start (start_head = 지금 HEAD)와 prompt 하나. hook이 쓰는 경로는 `git rev-parse --show-toplevel`이라
+/// realpath 기준이다 (macOS tempdir `/var` → `/private/var`)
+fn bash_session(data: &Path, repo: &TestRepo) -> PathBuf {
+    hook(data, "session-start", SID, repo.path(), "SessionStart");
+    prompt(data, SID);
+    fs::canonicalize(repo.path()).unwrap()
+}
+
+fn bash_events(dir: &wtboard_core::session::SessionDir) -> Vec<wtboard_core::session::Event> {
+    dir.events().into_iter().filter(|e| e.kind == EventKind::Bash).collect()
+}
+
+fn baseline_text(dir: &wtboard_core::session::SessionDir, path: &Path) -> String {
+    fs::read_to_string(dir.baseline_file(path)).unwrap()
+}
+
+#[test]
+fn bash_edit_of_clean_tracked_file() {
+    let data = tempfile::tempdir().unwrap();
+    let repo = TestRepo::new();
+    repo.write("a.py", "a = 1\n");
+    repo.commit_all("a");
+    let root = bash_session(data.path(), &repo);
+
+    let input =
+        with(bash_input(SID, repo.path(), Some("toolu_1")), json!({ "agent_id": "agent-3" }));
+    assert_quiet_exit(&run_hook(data.path(), "pre-bash", &input));
+    repo.write("a.py", "a = 2\n");
+    assert_quiet_exit(&run_hook(data.path(), "post-bash", &input));
+
+    let dir = session(data.path(), SID);
+    let a = root.join("a.py");
+    assert_eq!(dir.baselines()[&a].kind, BaselineKind::File);
+    assert_eq!(baseline_text(&dir, &a), "a = 1\n");
+    let events = bash_events(&dir);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].paths, [a]);
+    assert_eq!(events[0].tool.as_deref(), Some("Bash"));
+    assert_eq!(events[0].turn, 1);
+    assert_eq!(events[0].agent_id.as_deref(), Some("agent-3"));
+}
+
+#[test]
+fn bash_new_untracked_file() {
+    let data = tempfile::tempdir().unwrap();
+    let repo = TestRepo::new();
+    let root = bash_session(data.path(), &repo);
+
+    // 하위 폴더 안의 파일도 하나씩 잡는다 (`--untracked-files=all`). 이름에 공백
+    bash(data.path(), SID, repo.path(), || repo.write("out/new file.txt", "x"));
+
+    let dir = session(data.path(), SID);
+    let new = root.join("out/new file.txt");
+    assert_eq!(dir.baselines()[&new].kind, BaselineKind::New);
+    assert_eq!(bash_events(&dir)[0].paths, [new]);
+}
+
+#[test]
+fn bash_reedit_of_dirty_file_is_uncertain() {
+    let data = tempfile::tempdir().unwrap();
+    let repo = TestRepo::new();
+    repo.write("b.py", "b = 1\n");
+    repo.commit_all("b");
+    let start_head = repo.head();
+    let root = bash_session(data.path(), &repo);
+    // 세션 밖(사용자)에서 고친 파일
+    repo.write("b.py", "b = 2\n");
+
+    bash(data.path(), SID, repo.path(), || repo.write("b.py", "b = 33\n"));
+
+    let dir = session(data.path(), SID);
+    let b = root.join("b.py");
+    let baseline = &dir.baselines()[&b];
+    assert_eq!(baseline.kind, BaselineKind::Uncertain);
+    assert_eq!(baseline.head.as_deref(), Some(start_head.as_str()));
+    assert_eq!(baseline_text(&dir, &b), "b = 1\n");
+    assert_eq!(bash_events(&dir)[0].paths, [b]);
+}
+
+#[test]
+fn bash_revert_is_uncertain() {
+    let data = tempfile::tempdir().unwrap();
+    let repo = TestRepo::new();
+    repo.write("b.py", "b = 1\n");
+    repo.commit_all("b");
+    let root = bash_session(data.path(), &repo);
+    repo.write("b.py", "b = 2\n");
+
+    bash(data.path(), SID, repo.path(), || {
+        repo.git(&["checkout", "--", "b.py"]);
+    });
+
+    let dir = session(data.path(), SID);
+    let b = root.join("b.py");
+    assert_eq!(dir.baselines()[&b].kind, BaselineKind::Uncertain);
+    assert_eq!(bash_events(&dir)[0].paths, [b]);
+}
+
+#[test]
+fn bash_commit_uses_pre_head() {
+    let data = tempfile::tempdir().unwrap();
+    let repo = TestRepo::new();
+    repo.write("c.py", "c = 1\n");
+    repo.commit_all("c1");
+    let root = bash_session(data.path(), &repo);
+    // 세션 시작 뒤 (Bash 전) HEAD가 한 번 바뀐다
+    repo.write("c.py", "c = 2\n");
+    repo.commit_all("c2");
+
+    // Bash 안에서 고치고 커밋하고 또 고친다. 원본은 Bash 직전 HEAD의 내용
+    bash(data.path(), SID, repo.path(), || {
+        repo.write("c.py", "c = 3\n");
+        repo.commit_all("c3");
+        repo.write("c.py", "c = 4\n");
+    });
+
+    let dir = session(data.path(), SID);
+    let c = root.join("c.py");
+    assert_eq!(dir.baselines()[&c].kind, BaselineKind::File);
+    assert_eq!(baseline_text(&dir, &c), "c = 2\n");
+}
+
+#[test]
+fn bash_already_baselined_keeps_baseline() {
+    let data = tempfile::tempdir().unwrap();
+    let repo = TestRepo::new();
+    repo.write("a.py", "a = 1\n");
+    repo.commit_all("a");
+    let root = bash_session(data.path(), &repo);
+    let a = root.join("a.py");
+    edit(data.path(), SID, &a, Some("a = 2\n"));
+
+    bash(data.path(), SID, repo.path(), || repo.write("a.py", "a = 33\n"));
+
+    let dir = session(data.path(), SID);
+    assert_eq!(dir.baselines()[&a].kind, BaselineKind::File);
+    assert_eq!(baseline_text(&dir, &a), "a = 1\n");
+    assert_eq!(lines(&dir.root().join("baseline.jsonl")), 1);
+    assert_eq!(bash_events(&dir)[0].paths, [a]);
+}
+
+#[test]
+fn bash_outside_repo_does_nothing() {
+    let data = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    hook(data.path(), "session-start", SID, work.path(), "SessionStart");
+
+    let input = bash_input(SID, work.path(), Some("toolu_1"));
+    for sub in ["pre-bash", "post-bash"] {
+        if sub == "post-bash" {
+            fs::write(work.path().join("a.txt"), "x").unwrap();
+        }
+        let out = run_hook(data.path(), sub, &input);
+        assert_quiet_exit(&out);
+        assert!(out.stderr.is_empty(), "{sub}: {}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    let dir = session(data.path(), SID);
+    assert!(!dir.root().join("bash").exists());
+    assert!(dir.events().is_empty());
+}
+
+#[test]
+fn bash_without_tool_use_id_does_nothing() {
+    let data = tempfile::tempdir().unwrap();
+    let repo = TestRepo::new();
+    bash_session(data.path(), &repo);
+    let before = tree(data.path());
+
+    bash_with_id(data.path(), SID, repo.path(), None, || repo.write("a.txt", "x"));
+    // 파일 이름으로 쓰므로 세션 폴더 밖을 가리키는 id는 받지 않는다
+    bash_with_id(data.path(), SID, repo.path(), Some("../../evil"), || repo.write("b.txt", "x"));
+
+    assert_eq!(tree(data.path()), before);
+}
+
+#[test]
+fn bash_snapshot_file_removed_after_post() {
+    let data = tempfile::tempdir().unwrap();
+    let repo = TestRepo::new();
+    bash_session(data.path(), &repo);
+    let dir = session(data.path(), SID);
+    let snapshot = dir.root().join("bash/toolu_9.json");
+
+    let input = bash_input(SID, repo.path(), Some("toolu_9"));
+    assert_quiet_exit(&run_hook(data.path(), "pre-bash", &input));
+    assert!(snapshot.is_file());
+    let mode = fs::metadata(&snapshot).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    assert_quiet_exit(&run_hook(data.path(), "post-bash", &input));
+    assert!(!snapshot.exists());
+    // 바뀐 파일이 없으면 event도 없다
+    assert!(bash_events(&dir).is_empty());
+
+    // 스냅샷 없이 온 post-bash (pre-bash가 레포 밖이었거나 실패)는 아무것도 안 한다
+    repo.write("a.txt", "x");
+    assert_quiet_exit(&run_hook(data.path(), "post-bash", &input));
+    assert!(bash_events(&dir).is_empty());
+}
