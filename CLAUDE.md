@@ -18,6 +18,7 @@ pnpm --dir ui build          # 타입 체크 + 번들
 scripts/fixtures.sh <dir>    # UI 확인용 fixture 레포 3개 + config.toml
 WTBOARD_CONFIG=<dir>/config.toml pnpm tauri dev   # fixture로 실행
 scripts/install-hook.sh      # wtboard-hook release 빌드 → ~/.wtboard/bin/
+WTBOARD_CONFIG=<dir>/config.toml WTBOARD_HOOK_BIN=$PWD/target/debug/wtboard-hook claude --plugin-dir plugin/wtboard -p "리뷰 코멘트 반영해 줘"   # 설치 없이 debug hook으로 첨부 확인 (worktree 안에서)
 ```
 
 plugin 설치는 사용자가 직접 한다: `claude plugin marketplace add <repo>/plugin` 후 `claude plugin install wtboard@wtboard-local`.
@@ -26,11 +27,12 @@ plugin 설치는 사용자가 직접 한다: `claude plugin marketplace add <rep
 
 ## 구조
 
-- `crates/core`: git CLI 읽기 래퍼(`git/`), 변경 목록·diff·hash, 감시(`watch/`), worktree 상태(`worktree.rs`), 레포 하나(`repo.rs`), config 전체(`registry.rs`), profile(`profile.rs`), PR base(`gh.rs`), 설정(`store/config`)과 봤음 상태(`store/viewed`, SQLite, config.toml 옆 `state.sqlite`)
+- `crates/core`: git CLI 읽기 래퍼(`git/`), 변경 목록·diff·hash, 감시(`watch/`), worktree 상태(`worktree.rs`), 레포 하나(`repo.rs`), config 전체(`registry.rs`), profile(`profile.rs`), PR base(`gh.rs`), 설정(`store/config`)과 SQLite(config.toml 옆 `state.sqlite`, `PRAGMA user_version` = 1): 열기·migration(`store/db`), 봤음 상태(`store/viewed`), 리뷰 코멘트(`store/comments`), 앱 설정 key-value(`store/settings`, `always_on_top`)
+- `core::review`: 코멘트 → 첨부 텍스트(markdown) `render`와 hook의 claim transaction `attach` (hook과 앱의 "마크다운으로 복사"가 같이 쓴다)
 - `core::session`: Claude Code session 기록(`format`: 디스크 형식, `list`: session 목록·active 판정, `view`: 이번 세션·마지막 응답 diff)
-- `crates/hook`: `wtboard-hook` binary. Claude Code hook이 호출해 session 기록을 쓴다 (레포는 읽기만)
+- `crates/hook`: `wtboard-hook` binary. Claude Code hook이 호출해 session 기록을 쓴다 (레포는 읽기만). `prompt-submit`은 미전송 리뷰 코멘트를 `additionalContext` JSON으로 stdout에 내보내고 전송됨으로 바꾼다 (`[review] auto_attach_comments`, 기본 true)
 - `plugin/wtboard`: hook 설정 plugin (`plugin/.claude-plugin/marketplace.json`)
-- `crates/app`: Tauri command(`list_repos`, `list_files`, `get_patch`, `set_viewed`, `list_sessions`)와 `worktree-changed`, `worktrees-updated`, `session-updated` event
+- `crates/app`: Tauri command(`list_repos`, `list_files`, `get_patch`, `set_viewed`, `list_sessions`, 코멘트 `list_comments`·`add_comment`·`update_comment`·`delete_comment`·`clear_sent_comments`·`copy_comments`·`mark_comments_sent`)와 `worktree-changed`, `worktrees-updated`, `session-updated`, `select-worktree` event. `tray.rs`: 메뉴바 미확인 수·worktree 바로 가기·항상 위에, 창 닫기 = 숨기기 (Dock 클릭이 다시 연다)
 - `ui/`: React + TanStack Query + react-diff-view
 
 ## 지켜야 할 것
