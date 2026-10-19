@@ -7,6 +7,7 @@ pub mod paths;
 pub mod profile;
 pub mod registry;
 pub mod repo;
+pub mod review;
 pub mod session;
 pub mod watch;
 pub mod worktree;

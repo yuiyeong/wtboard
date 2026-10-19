@@ -20,6 +20,8 @@ pub enum StoreError {
     InvalidBody(String),
     #[error("이미 전송된 코멘트는 고칠 수 없음")]
     AlreadySent,
+    #[error("첨부 텍스트를 내보내지 못함: {0}")]
+    Emit(std::io::Error),
     #[error("코멘트를 찾을 수 없음: {0}")]
     NotFound(i64),
 }

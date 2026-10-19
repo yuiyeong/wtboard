@@ -109,8 +109,6 @@ fn get(conn: &Connection, id: i64) -> rusqlite::Result<Option<Comment>> {
 }
 
 /// worktree의 미전송 코멘트를 `path, line, id` 순으로 읽는다. 첨부(`review::attach`)도 이 순서를 쓴다
-// review::attach가 쓰기 전까지는 호출처가 없다
-#[allow(dead_code)]
 pub(crate) fn unsent_in(conn: &Connection, worktree: &str) -> rusqlite::Result<Vec<Comment>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT {COLUMNS} FROM comments WHERE worktree = ?1 AND sent_at IS NULL ORDER BY path, line, id"
@@ -219,5 +217,33 @@ impl CommentStore {
             "DELETE FROM comments WHERE sent_at IS NOT NULL AND sent_at < ?1",
             params![cutoff_ms as i64],
         )?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn insert(conn: &Connection, worktree: &str, path: &str, line: u32, sent_at: Option<i64>) -> i64 {
+        conn.execute(
+            "INSERT INTO comments (worktree, path, side, line, view, snippet, body, created_at, updated_at, sent_at)
+             VALUES (?1, ?2, 'new', ?3, 'branch', '', 'b', 1, 1, ?4)",
+            params![worktree, path, line, sent_at],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn unsent_in_is_unsent_only_ordered_by_path_line_id() {
+        let conn = db::open_memory();
+        let b3 = insert(&conn, "w", "b.rs", 3, None);
+        let a9 = insert(&conn, "w", "a.rs", 9, None);
+        let a2_first = insert(&conn, "w", "a.rs", 2, None);
+        let a2_second = insert(&conn, "w", "a.rs", 2, None);
+        insert(&conn, "w", "a.rs", 1, Some(100));
+        insert(&conn, "other", "a.rs", 1, None);
+        let ids: Vec<i64> = unsent_in(&conn, "w").unwrap().iter().map(|c| c.id).collect();
+        assert_eq!(ids, vec![a2_first, a2_second, a9, b3]);
     }
 }
