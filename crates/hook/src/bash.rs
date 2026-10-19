@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
 use wtboard_core::git::{Git, GitError};
@@ -42,7 +42,7 @@ pub fn pre_bash(dir: &SessionDir, input: &HookInput) -> HookResult {
     let Some((root, head)) = out.split_once('\n') else { return Ok(()) };
     let root = PathBuf::from(root);
     // status보다 먼저 잰다. 커밋 시각은 초 단위라 내림한다
-    let started = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let started = now_ms() / 1000;
     let entries = status(&root)?;
     let snapshot = StatusSnapshot { root, head: head.to_string(), started, entries };
     dir.write_bash_snapshot(id, &serde_json::to_vec(&snapshot)?)?;

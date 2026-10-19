@@ -17,6 +17,7 @@ use super::list::{target_turn, touched, with_root, Touch};
 use super::{Baseline, BaselineKind, SessionDir, Snapshot, TurnIndex};
 use crate::domain::{ChangedFile, FilePatch, FileStatus, PatchBody, MAX_DIFF_BYTES};
 use crate::git::attrs::linguist_generated;
+use crate::git::{Git, GitError};
 use crate::git::patch::{file_digest, hash_reader, no_index_numstat, no_index_patch, sides_hash};
 use crate::worktree::{FileEntry, ViewedState, Worktree, WorktreeError};
 
@@ -108,6 +109,9 @@ impl Side {
 /// 내용 파일 하나의 (경로, 크기, mtime). 이것이 그대로면 내용도 그대로라고 본다
 type FileKey = (PathBuf, u64, SystemTime);
 
+/// (before, after). `None`은 파일 없음
+type PairKey = (Option<FileKey>, Option<FileKey>);
+
 /// cache가 이보다 커지면 비운다 (오래된 세션·worktree의 항목이 쌓이지 않게)
 const CACHE_CAP: usize = 4096;
 
@@ -126,7 +130,7 @@ type Lines = (Option<u32>, Option<u32>);
 /// (목록은 파일이 바뀔 때마다 다시 계산하는데, 바뀐 파일은 대개 하나다)
 #[derive(Debug, Default)]
 pub struct SessionViewCache {
-    entries: Mutex<HashMap<(Option<FileKey>, Option<FileKey>), Compared>>,
+    entries: Mutex<HashMap<PairKey, Compared>>,
     computed: AtomicUsize,
 }
 
@@ -148,7 +152,7 @@ impl SessionViewCache {
     }
 
     /// 두 내용 파일의 `git diff --no-index --numstat`. 오류는 cache하지 않는다
-    fn numstat(&self, git: &crate::git::Git, before: &Side, after: &Side) -> Result<Lines, crate::git::GitError> {
+    fn numstat(&self, git: &Git, before: &Side, after: &Side) -> Result<Lines, GitError> {
         let run = || no_index_numstat(git, before.content.as_deref(), after.content.as_deref());
         let Some(key) = key(before, after) else { return run() };
         if let Some(numstat) = self.get(&key).and_then(|c| c.numstat) {
@@ -159,11 +163,11 @@ impl SessionViewCache {
         Ok(numstat)
     }
 
-    fn get(&self, key: &(Option<FileKey>, Option<FileKey>)) -> Option<Compared> {
+    fn get(&self, key: &PairKey) -> Option<Compared> {
         self.entries.lock().unwrap_or_else(|e| e.into_inner()).get(key).copied()
     }
 
-    fn put(&self, key: (Option<FileKey>, Option<FileKey>), value: Compared) {
+    fn put(&self, key: PairKey, value: Compared) {
         self.computed.fetch_add(1, Ordering::Relaxed);
         let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         if entries.len() >= CACHE_CAP {
@@ -174,7 +178,7 @@ impl SessionViewCache {
 }
 
 /// cache key. 1MB 초과 쪽이 있거나 파일 정보를 못 읽으면 `None` (cache하지 않는다)
-fn key(before: &Side, after: &Side) -> Option<(Option<FileKey>, Option<FileKey>)> {
+fn key(before: &Side, after: &Side) -> Option<PairKey> {
     if before.too_large || after.too_large {
         return None;
     }
@@ -256,8 +260,10 @@ pub fn patch(
     rel: &str,
     all_roots: &[PathBuf],
 ) -> Result<FilePatch, WorktreeError> {
-    let (_, item) =
-        items(dir, view, wt, all_roots, Some(rel), &SessionViewCache::default()).pop().ok_or_else(|| WorktreeError::UnknownFile(rel.to_owned()))?;
+    // 파일 하나라 cache하지 않는다
+    let (_, item) = items(dir, view, wt, all_roots, Some(rel), &SessionViewCache::default())
+        .pop()
+        .ok_or_else(|| WorktreeError::UnknownFile(rel.to_owned()))?;
     let item = item?;
     if !(item.before.too_large || item.after.too_large) {
         let (before, after) = (item.before.content.as_deref(), item.after.content.as_deref());
