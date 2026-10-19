@@ -51,7 +51,7 @@
 ├─ baseline.jsonl       # 원본 기록: {path, kind: "file"|"new"|"too_large"|"uncertain", head?}
 ├─ bash/<tool_use_id>.json  # pre-bash 스냅샷 (post-bash가 읽고 지운다)
 └─ turns/<n>/<abs path> # turn n이 끝난 시점의 파일 내용 (그 turn에 건드린 파일만)
-    └─ (turns/<n>/deleted.txt: 그 시점에 없던 파일 목록)
+    └─ (turns/<n>/index.jsonl: 그 시점에 없던 파일(deleted)과 1MB 초과 파일(too_large, size·hash) 목록)
 ```
 
 - 경로 key는 절대 경로다 (NFC). 한 세션이 여러 worktree를 고쳐도 섞이지 않는다.
@@ -59,7 +59,8 @@
 - 쓰기는 모두 `<data dir>/sessions/` 안에서만 한다. 레포에는 쓰지 않는다.
 - 동시성: hook은 병렬로 돈다 (같은 event의 여러 hook, 병렬 tool 호출). baseline은 `create_new`(O_EXCL)로 만들어 먼저 만든 쪽이 이긴다. `events.jsonl`은 줄 하나를 `O_APPEND` write 한 번으로 쓴다. `meta.json`은 임시 파일에 쓰고 rename한다. turn 경계 hook(session-start, prompt-submit, turn-end, session-end)만 쓰고, 이 hook들은 한 세션 안에서 겹치지 않는다. 마지막 활동 시각은 meta에 두지 않고 `events.jsonl`의 mtime으로 본다 (모든 hook이 meta를 쓰면 turn 증가가 덮일 수 있다).
 - `session_id`는 `[A-Za-z0-9_-]`만 허용한다. 경로는 절대 경로이고 `..` component가 없어야 한다. 아니면 기록하지 않는다 (세션 폴더 밖에 쓰지 않게).
-- 1MB(`MAX_DIFF_BYTES`)를 넘는 파일은 내용을 복사하지 않고 `too_large`로 기록한다.
+- 1MB(`MAX_DIFF_BYTES`)를 넘는 파일은 내용을 복사하지 않고 `too_large`로 기록한다. 크기와 blake3 hash를 남겨 화면이 크기 변화를 보이고 같은지 판단할 수 있게 한다.
+- 스냅샷은 경로마다 따로 처리한다. 한 경로의 오류(디렉터리, 읽기 실패, 그사이 사라짐)가 그 turn의 다른 경로를 막지 않는다.
 
 ## 3. hook 동작
 
