@@ -1,4 +1,5 @@
 use std::fs;
+use std::io;
 use std::path::Path;
 
 use super::{Git, GitError, DIFF_FLAGS};
@@ -94,7 +95,8 @@ pub fn no_index_patch(
     let too_large = old_size.max(new_size).is_some_and(|s| s > MAX_DIFF_BYTES);
     let diff = if too_large { Vec::new() } else { no_index(git, &[], before, after)? };
     if too_large || is_binary(&diff) {
-        let hash = files_hash(&[before, after]);
+        let digest = |p: Option<&Path>| p.and_then(|p| file_digest(p).ok().flatten());
+        let hash = sides_hash([digest(before), digest(after)]);
         let body = if too_large {
             PatchBody::TooLarge { old_size, new_size }
         } else {
@@ -199,15 +201,35 @@ fn quote(name: &str) -> String {
     out
 }
 
-/// 바이너리/큰 파일의 hash: 각 파일의 크기(없으면 표시값)와 내용
-fn files_hash(files: &[Option<&Path>]) -> String {
+/// 읽은 바이트 수와 blake3 hash (hex). 세션 기록의 `too_large` 원본·스냅샷도 이 값을 남긴다
+pub(crate) fn hash_reader(src: impl io::Read) -> io::Result<(u64, String)> {
     let mut hasher = blake3::Hasher::new();
-    for file in files {
-        let opened = file.and_then(|p| fs::File::open(p).ok());
-        let size = opened.as_ref().and_then(|f| f.metadata().ok()).map(|m| m.len());
-        hasher.update(&size.unwrap_or(u64::MAX).to_le_bytes());
-        if let Some(f) = opened {
-            let _ = hasher.update_reader(f);
+    hasher.update_reader(src)?;
+    Ok((hasher.count(), hasher.finalize().to_hex().to_string()))
+}
+
+/// 파일 내용의 (크기, blake3 hash). 일반 파일이 아니거나 읽지 못하면 `None`
+pub(crate) fn file_digest(path: &Path) -> io::Result<Option<(u64, String)>> {
+    match fs::File::open(path) {
+        Ok(f) => hash_reader(f).map(Some),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// 세션 view에서 바이너리/1MB 초과 patch의 hash. 양쪽의 (크기, 내용 hash)로 만든다. 없는 쪽은 표시값.
+/// 내용 hash가 세션 기록의 `too_large` hash와 같은 방식이라, 같은 내용이면 내용 파일에서 왔든 기록에서 왔든 같은 hash다
+pub(crate) fn sides_hash(sides: [Option<(u64, String)>; 2]) -> String {
+    let mut hasher = blake3::Hasher::new();
+    for side in &sides {
+        match side {
+            Some((size, hash)) => {
+                hasher.update(&size.to_le_bytes());
+                hasher.update(hash.as_bytes());
+            }
+            None => {
+                hasher.update(&u64::MAX.to_le_bytes());
+            }
         }
     }
     hasher.finalize().to_hex().to_string()

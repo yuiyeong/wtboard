@@ -1,8 +1,9 @@
 //! 세션 목록. 세션을 worktree에 귀속시키고 활성 여부를 정한다. 세션 폴더는 읽기만 한다 (`cleanup` 제외).
 //!
-//! 세션은 그 세션 event의 경로 중 하나가 worktree root 아래이거나, `project_dir`가 root 아래인 worktree에 속한다.
-//! 한 세션이 여러 worktree에 속할 수 있다.
-use std::collections::{BTreeSet, HashSet};
+//! 세션은 그 세션 event의 경로 중 하나나 `project_dir`를 가진 worktree에 속한다. 경로는 그것을 담는 가장 깊은
+//! worktree만 갖는다 (`<repo>/.claude/worktrees/<name>` 같은 안쪽 worktree의 파일은 바깥 worktree 것이 아니다).
+//! 그래서 귀속을 정하는 함수는 모두 전체 worktree root 목록을 받는다. 한 세션이 여러 worktree에 속할 수 있다.
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -45,17 +46,17 @@ pub(crate) struct Touch {
     pub abs: PathBuf,
 }
 
-/// `worktree_root`에 속한 세션들. 최근 활동 순
-pub fn sessions_for(data_dir: &Path, worktree_root: &Path, now: u64) -> Vec<SessionSummary> {
+/// `worktree_root`에 속한 세션들. 최근 활동 순. `all_roots`는 열려 있는 모든 worktree root
+pub fn sessions_for(data_dir: &Path, worktree_root: &Path, all_roots: &[PathBuf], now: u64) -> Vec<SessionSummary> {
+    let roots = with_root(worktree_root, all_roots);
     let mut out: Vec<SessionSummary> = session_dirs(data_dir)
         .into_iter()
         .filter_map(|dir| {
             let last = last_activity(&dir)?;
             let meta = dir.read_meta();
             let events = dir.events();
-            let touches = touched(&events, worktree_root);
-            let in_project =
-                meta.as_ref().is_some_and(|m| rel_under(worktree_root, &canonical(&m.project_dir)).is_some());
+            let touches = touched(&events, worktree_root, &roots);
+            let in_project = meta.as_ref().is_some_and(|m| project_owner(&roots, m) == Some(worktree_root));
             if touches.is_empty() && !in_project {
                 return None;
             }
@@ -80,20 +81,10 @@ pub fn sessions_for(data_dir: &Path, worktree_root: &Path, now: u64) -> Vec<Sess
 /// `roots` 중 세션이 속한 worktree. `roots` 순서대로
 pub fn worktrees_of(dir: &SessionDir, roots: &[PathBuf]) -> Vec<PathBuf> {
     let events = dir.events();
-    // 어느 root 아래도 아닌 경로만 symlink를 푼다 (경로마다 한 번). project_dir은 폴더 자체가 symlink일 수 있다
     let files: BTreeSet<&Path> = file_paths(&events).collect();
-    let mut spellings: Vec<PathBuf> = files
-        .into_iter()
-        .flat_map(|p| {
-            let real = if roots.iter().any(|r| p.starts_with(r)) { None } else { real_path(p) };
-            std::iter::once(p.to_path_buf()).chain(real)
-        })
-        .collect();
-    if let Some(meta) = dir.read_meta() {
-        spellings.push(canonical(&meta.project_dir));
-        spellings.push(meta.project_dir);
-    }
-    roots.iter().filter(|root| spellings.iter().any(|p| p.starts_with(root))).cloned().collect()
+    let mut owned: HashSet<&Path> = files.into_iter().filter_map(|p| owner(roots, p)).map(|(r, _)| r).collect();
+    owned.extend(dir.read_meta().and_then(|m| project_owner(roots, &m)));
+    roots.iter().filter(|r| owned.contains(r.as_path())).cloned().collect()
 }
 
 /// 활성 세션이 있는 worktree. meta와 mtime만 먼저 보고 활성인 세션만 events를 읽는다
@@ -149,17 +140,31 @@ fn is_file_event(e: &Event) -> bool {
     matches!(e.kind, EventKind::Edit | EventKind::Bash)
 }
 
-/// 파일 event 경로 중 `root` 아래인 것. event 순서대로, 중복 포함
-pub(crate) fn touched(events: &[Event], root: &Path) -> Vec<Touch> {
-    events
-        .iter()
-        .filter(|e| is_file_event(e))
-        .flat_map(|e| e.paths.iter().map(move |p| (e.turn.max(1), p)))
-        .filter_map(|(turn, abs)| {
-            let rel = rel_under(root, abs).filter(|r| !r.is_empty())?;
-            Some(Touch { turn, rel, abs: abs.clone() })
-        })
-        .collect()
+/// 파일 event 경로 중 `root`가 가진 것 (`roots`에서 가장 깊은 root가 `root`). event 순서대로, 중복 포함.
+/// 귀속은 경로마다 한 번만 정한다 (symlink를 푸는 경로가 있다)
+pub(crate) fn touched(events: &[Event], root: &Path, roots: &[PathBuf]) -> Vec<Touch> {
+    let mut rels: HashMap<&Path, Option<String>> = HashMap::new();
+    let mut out = Vec::new();
+    for e in events.iter().filter(|e| is_file_event(e)) {
+        for abs in &e.paths {
+            let rel = rels.entry(abs).or_insert_with(|| {
+                owner(roots, abs).filter(|(r, rel)| *r == root && !rel.is_empty()).map(|(_, rel)| rel)
+            });
+            if let Some(rel) = rel {
+                out.push(Touch { turn: e.turn.max(1), rel: rel.clone(), abs: abs.clone() });
+            }
+        }
+    }
+    out
+}
+
+/// `roots`에 `root`가 없으면 더한다
+pub(crate) fn with_root(root: &Path, roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut out = roots.to_vec();
+    if !out.iter().any(|r| r == root) {
+        out.push(root.to_path_buf());
+    }
+    out
 }
 
 /// "마지막 응답"이 보여 줄 turn과 진행 중 여부. 열린 turn에 이 worktree의 event(`touches`)가 있으면
@@ -178,11 +183,21 @@ pub(crate) fn target_turn(meta: Option<&Meta>, events: &[Event], touches: &[Touc
     }
 }
 
-/// `root` 아래면 상대 경로 (`root` 자신이면 `""`). 기록된 경로가 symlink를 거쳤으면
-/// (`/var/...` ↔ `/private/var/...`) 푼 경로로 다시 본다. worktree root는 canonical이다
-pub(crate) fn rel_under(root: &Path, path: &Path) -> Option<String> {
-    let rel = |p: &Path| p.strip_prefix(root).ok().map(|r| r.to_string_lossy().into_owned());
-    rel(path).or_else(|| rel(&real_path(path)?))
+/// 경로를 가진 worktree root와 그 상대 경로 (root 자신이면 `""`): `roots` 중 경로를 담는 가장 깊은 root.
+/// 기록된 경로가 어느 root 아래도 아니면 symlink를 푼 경로로 다시 본다 (`/var/...` → `/private/var/...`).
+/// worktree root는 canonical이다
+fn owner<'a>(roots: &'a [PathBuf], path: &Path) -> Option<(&'a Path, String)> {
+    deepest(roots, path).or_else(|| deepest(roots, &real_path(path)?))
+}
+
+fn deepest<'a>(roots: &'a [PathBuf], path: &Path) -> Option<(&'a Path, String)> {
+    let root = roots.iter().filter(|r| path.starts_with(r)).max_by_key(|r| r.components().count())?;
+    Some((root, path.strip_prefix(root).ok()?.to_string_lossy().into_owned()))
+}
+
+/// `project_dir`를 가진 worktree. 폴더 자체가 symlink일 수 있어 끝까지 푼다
+fn project_owner<'a>(roots: &'a [PathBuf], meta: &Meta) -> Option<&'a Path> {
+    owner(roots, &canonical(&meta.project_dir)).map(|(r, _)| r)
 }
 
 /// 경로의 폴더 부분 symlink를 푼 NFC 경로. 파일 자체의 symlink는 풀지 않는다 (worktree 안의 symlink가

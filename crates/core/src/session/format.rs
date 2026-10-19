@@ -22,6 +22,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::MAX_DIFF_BYTES;
+use crate::git::patch::hash_reader;
 use crate::paths::nfc;
 
 const META: &str = "meta.json";
@@ -146,6 +147,27 @@ enum TurnState {
     TooLarge { size: u64, hash: String },
 }
 
+/// turn 하나의 기록. index를 먼저 본다. 같은 turn을 다시 찍었을 때 남은 예전 내용 파일보다 이번 상태가 앞선다
+pub struct TurnIndex {
+    dir: PathBuf,
+    entries: HashMap<PathBuf, TurnState>,
+}
+
+impl TurnIndex {
+    /// 경로 하나의 스냅샷. 그 turn이 건드리지 않았으면 (또는 그 경로의 스냅샷이 실패했으면) `None`
+    pub fn get(&self, path: &Path) -> Option<Snapshot> {
+        let path = nfc(path);
+        if let Some(state) = self.entries.get(&path) {
+            return Some(match state {
+                TurnState::Deleted => Snapshot::Deleted,
+                TurnState::TooLarge { size, hash } => Snapshot::TooLarge { size: *size, hash: hash.clone() },
+            });
+        }
+        let file = mirror(&self.dir, &path);
+        file.is_file().then_some(Snapshot::Content(file))
+    }
+}
+
 /// 세션 폴더 하나. `open`은 경로만 정하고, 폴더는 처음 쓸 때 만든다
 #[derive(Debug, Clone)]
 pub struct SessionDir {
@@ -252,19 +274,19 @@ impl SessionDir {
     }
 
     /// turn `n`에 기록된 경로 하나. 그 turn이 건드리지 않았으면 `None`.
-    /// index를 먼저 본다. 같은 turn을 다시 찍었을 때 남은 예전 내용 파일보다 이번 상태가 앞선다
+    /// 여러 경로를 볼 때는 `turn_index`로 index를 한 번만 읽는다
     pub fn turn_snapshot(&self, turn: u32, path: &Path) -> Option<Snapshot> {
+        self.turn_index(turn).get(path)
+    }
+
+    /// turn `n`의 `index.jsonl`을 읽어 둔다
+    pub fn turn_index(&self, turn: u32) -> TurnIndex {
         let dir = self.turn_dir(turn);
-        let path = nfc(path);
-        let index = read_lines::<TurnEntry>(&dir.join(TURN_INDEX));
-        if let Some(entry) = index.into_iter().find(|e| e.path == path) {
-            return Some(match entry.state {
-                TurnState::Deleted => Snapshot::Deleted,
-                TurnState::TooLarge { size, hash } => Snapshot::TooLarge { size, hash },
-            });
+        let mut entries = HashMap::new();
+        for e in read_lines::<TurnEntry>(&dir.join(TURN_INDEX)) {
+            entries.entry(e.path).or_insert(e.state);
         }
-        let file = mirror(&dir, &path);
-        file.is_file().then_some(Snapshot::Content(file))
+        TurnIndex { dir, entries }
     }
 
     /// pre-bash의 git status 스냅샷을 저장한다. 내용 형식은 hook이 정한다
@@ -421,13 +443,6 @@ fn private_file() -> OpenOptions {
 /// 0600으로 만들거나 비우고 연다
 fn create_private(path: &Path) -> io::Result<File> {
     private_file().create(true).truncate(true).open(path)
-}
-
-/// 읽은 바이트 수와 blake3 hash (hex)
-pub(crate) fn hash_reader(src: impl io::Read) -> io::Result<(u64, String)> {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update_reader(src)?;
-    Ok((hasher.count(), hasher.finalize().to_hex().to_string()))
 }
 
 /// 절대 경로를 `base` 아래로 옮긴다. `Normal` component만 이어서 잘못된 경로도 `base` 밖을 가리키지 않는다

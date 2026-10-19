@@ -4,18 +4,17 @@
 //! - 이번 세션: 원본(baseline) ↔ 현재 파일
 //! - 마지막 응답: 그 파일의 이전 turn 스냅샷(없으면 원본) ↔ 대상 turn 스냅샷 (진행 중이면 현재 파일)
 //!
-//! 양쪽이 같으면 (되돌린 파일) 목록에서 뺀다.
+//! 양쪽이 같으면 (되돌린 파일) 목록에서 뺀다. 파일 하나를 읽지 못해도 (권한, symlink loop 등) 목록은 보여 준다.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use super::format::hash_reader;
-use super::list::{target_turn, touched, Touch};
-use super::{Baseline, BaselineKind, SessionDir, Snapshot};
+use super::list::{target_turn, touched, with_root, Touch};
+use super::{Baseline, BaselineKind, SessionDir, Snapshot, TurnIndex};
 use crate::domain::{ChangedFile, FilePatch, FileStatus, PatchBody, MAX_DIFF_BYTES};
 use crate::git::attrs::linguist_generated;
-use crate::git::patch::{no_index_numstat, no_index_patch};
+use crate::git::patch::{file_digest, hash_reader, no_index_numstat, no_index_patch, sides_hash};
 use crate::worktree::{FileEntry, ViewedState, Worktree, WorktreeError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,13 +53,15 @@ impl Side {
         }
     }
 
-    /// 지금 worktree 파일. 일반 파일이 아니면 없는 것으로 본다. symlink는 대상 파일로 본다
+    /// 지금 worktree 파일. 일반 파일이 아니면 (상위 폴더가 파일로 바뀐 경우 포함) 없는 것으로 본다. symlink는 대상 파일로 본다
     /// (hook의 원본·스냅샷 복사도 대상을 따른다. `git diff --no-index`는 링크 자체를 읽으므로 푼 경로를 넘긴다)
     fn current(path: &Path) -> io::Result<Self> {
         let meta = match fs::metadata(path) {
             Ok(m) if m.is_file() => m,
             Ok(_) => return Ok(Self::default()),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(e) if matches!(e.kind(), io::ErrorKind::NotFound | io::ErrorKind::NotADirectory) => {
+                return Ok(Self::default())
+            }
             Err(e) => return Err(e),
         };
         if meta.len() > MAX_DIFF_BYTES {
@@ -82,6 +83,15 @@ impl Side {
         }
     }
 
+    /// 내용의 (크기, blake3 hash). 세션 기록의 `too_large`와 같은 방식이다
+    fn digest(&self) -> io::Result<Option<(u64, String)>> {
+        match (&self.content, self.size, &self.hash) {
+            (Some(p), ..) => file_digest(p),
+            (None, Some(size), Some(hash)) => Ok(Some((size, hash.clone()))),
+            _ => Ok(None),
+        }
+    }
+
     /// 내용 파일은 바이트로, 1MB 초과는 크기·hash로 비교한다
     fn same_as(&self, other: &Side) -> io::Result<bool> {
         Ok(match (&self.content, &other.content) {
@@ -94,59 +104,96 @@ impl Side {
 
 /// view에 들어가는 파일 하나
 struct Item {
-    rel: String,
     before: Side,
     after: Side,
     uncertain: bool,
 }
 
 /// 경로순 변경 목록. status는 양쪽 유무로, 줄 수는 `git diff --no-index --numstat`으로 정한다.
-/// 접기는 브랜치 view와 같은 규칙 (profile pattern, `linguist-generated`)
-pub fn changes(dir: &SessionDir, view: SessionView, wt: &Worktree) -> Result<Vec<FileEntry>, WorktreeError> {
-    let items = items(dir, view, wt, None)?;
+/// 접기는 브랜치 view와 같은 규칙 (profile pattern, `linguist-generated`).
+/// 읽지 못한 파일은 줄 수 없이 `uncertain`으로 남긴다 (patch를 열면 그 오류가 보인다).
+/// `all_roots`는 열려 있는 모든 worktree root (안쪽 worktree의 파일을 빼는 데 쓴다)
+pub fn changes(
+    dir: &SessionDir,
+    view: SessionView,
+    wt: &Worktree,
+    all_roots: &[PathBuf],
+) -> Result<Vec<FileEntry>, WorktreeError> {
+    let items = items(dir, view, wt, all_roots, None);
     let git = wt.git();
-    let rels: Vec<&str> = items.iter().map(|i| i.rel.as_str()).collect();
+    let rels: Vec<&str> = items.iter().map(|(rel, _)| rel.as_str()).collect();
     // check-attr가 실패해도 목록은 보여 준다. 생성 파일이 아닌 것으로 본다
     let generated = linguist_generated(git, &rels).unwrap_or_default();
-    items
+    let warn = |rel: &str, e: &dyn std::fmt::Display| {
+        eprintln!("[wtboard] {}: 세션 변경을 계산할 수 없음: {e}", wt.layout().root.join(rel).display());
+    };
+    Ok(items
         .into_iter()
-        .map(|item| {
-            let (additions, deletions) = if item.before.too_large || item.after.too_large {
-                (None, None)
-            } else {
-                no_index_numstat(git, item.before.content.as_deref(), item.after.content.as_deref())?
+        .map(|(rel, item)| {
+            let (status, additions, deletions, uncertain) = match item {
+                Ok(item) => {
+                    let (additions, deletions) = if item.before.too_large || item.after.too_large {
+                        (None, None)
+                    } else {
+                        let (before, after) = (item.before.content.as_deref(), item.after.content.as_deref());
+                        no_index_numstat(git, before, after).unwrap_or_else(|e| {
+                            warn(&rel, &e);
+                            (None, None)
+                        })
+                    };
+                    let status = match (item.before.exists(), item.after.exists()) {
+                        (false, _) => FileStatus::Added,
+                        (_, false) => FileStatus::Deleted,
+                        _ => FileStatus::Modified,
+                    };
+                    (status, additions, deletions, item.uncertain)
+                }
+                Err(e) => {
+                    warn(&rel, &e);
+                    (FileStatus::Modified, None, None, true)
+                }
             };
-            let status = match (item.before.exists(), item.after.exists()) {
-                (false, _) => FileStatus::Added,
-                (_, false) => FileStatus::Deleted,
-                _ => FileStatus::Modified,
-            };
-            let collapsed = wt.profile().collapses(&item.rel) || generated.contains(&item.rel);
-            Ok(FileEntry {
-                file: ChangedFile { path: item.rel, status, additions, deletions, collapsed },
+            let collapsed = wt.profile().collapses(&rel) || generated.contains(&rel);
+            FileEntry {
+                file: ChangedFile { path: rel, status, additions, deletions, collapsed },
                 viewed: ViewedState::Unviewed,
-                uncertain: item.uncertain,
-            })
+                uncertain,
+            }
         })
-        .collect()
+        .collect())
 }
 
-/// 파일 하나의 patch. 목록에 없는 경로(건드리지 않음, 되돌림)면 `UnknownFile`
-pub fn patch(dir: &SessionDir, view: SessionView, wt: &Worktree, rel: &str) -> Result<FilePatch, WorktreeError> {
-    let item = items(dir, view, wt, Some(rel))?.pop().ok_or_else(|| WorktreeError::UnknownFile(rel.to_owned()))?;
+/// 파일 하나의 patch. 목록에 없는 경로(건드리지 않음, 되돌림)면 `UnknownFile`, 읽지 못하면 그 오류
+pub fn patch(
+    dir: &SessionDir,
+    view: SessionView,
+    wt: &Worktree,
+    rel: &str,
+    all_roots: &[PathBuf],
+) -> Result<FilePatch, WorktreeError> {
+    let (_, item) =
+        items(dir, view, wt, all_roots, Some(rel)).pop().ok_or_else(|| WorktreeError::UnknownFile(rel.to_owned()))?;
+    let item = item?;
     if !(item.before.too_large || item.after.too_large) {
         let (before, after) = (item.before.content.as_deref(), item.after.content.as_deref());
         return Ok(no_index_patch(wt.git(), rel, before, after)?);
     }
     let body = PatchBody::TooLarge { old_size: item.before.len()?, new_size: item.after.len()? };
-    Ok(FilePatch { path: rel.to_owned(), body, hash: large_hash(&item)? })
+    let hash = sides_hash([item.before.digest()?, item.after.digest()?]);
+    Ok(FilePatch { path: rel.to_owned(), body, hash })
 }
 
-/// view의 파일들 (`only`면 그 경로만). 경로순, 양쪽이 같은 파일은 뺀다
-fn items(dir: &SessionDir, view: SessionView, wt: &Worktree, only: Option<&str>) -> io::Result<Vec<Item>> {
+/// view의 파일들 (`only`면 그 경로만). 경로순, 양쪽이 같은 파일은 뺀다. 파일마다 따로 읽어 한 파일의 오류가 목록을 막지 않는다
+fn items(
+    dir: &SessionDir,
+    view: SessionView,
+    wt: &Worktree,
+    all_roots: &[PathBuf],
+    only: Option<&str>,
+) -> Vec<(String, io::Result<Item>)> {
     let root = &wt.layout().root;
     let events = dir.events();
-    let touches = touched(&events, root);
+    let touches = touched(&events, root, &with_root(root, all_roots));
     let turn = match view {
         SessionView::Session => None,
         SessionView::Turn => Some(target_turn(dir.read_meta().as_ref(), &events, &touches)),
@@ -158,67 +205,71 @@ fn items(dir: &SessionDir, view: SessionView, wt: &Worktree, only: Option<&str>)
             targets.entry(t.rel.as_str()).or_insert(t);
         }
     }
-    let baselines = dir.baselines();
-    let mut out = Vec::new();
-    for (rel, touch) in targets {
-        let current = || Side::current(&root.join(rel));
-        let (before, after, uncertain) = match turn {
-            None => {
-                let (before, uncertain) = baseline_side(dir, &baselines, &touch.abs);
-                (before, current()?, uncertain)
-            }
-            Some((n, open)) => {
+    let mut cx = Context { dir, root, touches: &touches, baselines: dir.baselines(), turns: HashMap::new() };
+    targets
+        .into_iter()
+        .filter_map(|(rel, touch)| match cx.item(turn, touch) {
+            Ok(Some(item)) => Some((rel.to_owned(), Ok(item))),
+            Ok(None) => None,
+            Err(e) => Some((rel.to_owned(), Err(e))),
+        })
+        .collect()
+}
+
+/// 한 번의 계산 동안 읽어 둔 세션 기록
+struct Context<'a> {
+    dir: &'a SessionDir,
+    root: &'a Path,
+    touches: &'a [Touch],
+    baselines: HashMap<PathBuf, Baseline>,
+    /// turn별 index는 한 번만 읽는다
+    turns: HashMap<u32, TurnIndex>,
+}
+
+impl Context<'_> {
+    /// 파일 하나의 before·after. 양쪽이 같으면 `None`. `turn`은 마지막 응답 view의 (대상 turn, 진행 중)
+    fn item(&mut self, turn: Option<(u32, bool)>, touch: &Touch) -> io::Result<Option<Item>> {
+        let (before, uncertain) = match turn {
+            None => self.baseline(&touch.abs),
+            Some((n, _)) => {
                 // 이전 turn 스냅샷은 그 turn에 이 파일을 건드렸을 때만 있다. 가장 최근 것부터 본다
                 let older: BTreeSet<u32> =
-                    touches.iter().filter(|t| t.rel == rel && t.turn < n).map(|t| t.turn).collect();
-                let (before, uncertain) = match older.iter().rev().find_map(|k| dir.turn_snapshot(*k, &touch.abs)) {
+                    self.touches.iter().filter(|t| t.rel == touch.rel && t.turn < n).map(|t| t.turn).collect();
+                match older.iter().rev().find_map(|k| self.snapshot(*k, &touch.abs)) {
                     Some(s) => (Side::snapshot(s), false),
-                    None => baseline_side(dir, &baselines, &touch.abs),
-                };
-                // 닫힌 turn에 스냅샷이 없으면 (스냅샷 뒤에 온 event, 경로 오류) 현재 파일로 본다
-                let after = match dir.turn_snapshot(n, &touch.abs).filter(|_| !open) {
-                    Some(s) => Side::snapshot(s),
-                    None => current()?,
-                };
-                (before, after, uncertain)
+                    None => self.baseline(&touch.abs),
+                }
             }
         };
-        if !before.same_as(&after)? {
-            out.push(Item { rel: rel.to_owned(), before, after, uncertain });
-        }
+        // 닫힌 turn은 그 turn의 스냅샷. 없으면 (스냅샷 뒤에 온 event, 경로 오류) 현재 파일로 본다
+        let after = match turn {
+            Some((n, false)) => self.snapshot(n, &touch.abs),
+            _ => None,
+        };
+        let after = match after {
+            Some(s) => Side::snapshot(s),
+            None => Side::current(&self.root.join(&touch.rel))?,
+        };
+        Ok((!before.same_as(&after)?).then_some(Item { before, after, uncertain }))
     }
-    Ok(out)
-}
 
-/// 원본과 그것이 불확실한지. `new`는 없는 파일, `uncertain`은 hook이 저장한 세션 시작 HEAD 내용.
-/// 원본 기록이 없으면 (hook이 늦게 설치됐거나 실패, 기록 전에 죽어 내용 파일만 남음) 세션 전 내용을
-/// 모르므로 없는 파일로 보고 불확실로 표시한다
-fn baseline_side(dir: &SessionDir, baselines: &HashMap<PathBuf, Baseline>, abs: &Path) -> (Side, bool) {
-    let Some(b) = baselines.get(abs) else { return (Side::default(), true) };
-    let file = dir.baseline_file(abs);
-    match (b.kind, b.size, &b.hash) {
-        (BaselineKind::New, ..) => (Side::default(), false),
-        (BaselineKind::TooLarge, Some(size), Some(hash)) => (Side::large(size, hash.clone()), false),
-        (BaselineKind::File | BaselineKind::Uncertain, ..) if file.is_file() => {
-            (Side::file(file), b.kind == BaselineKind::Uncertain)
-        }
-        _ => (Side::default(), true),
+    fn snapshot(&mut self, turn: u32, abs: &Path) -> Option<Snapshot> {
+        self.turns.entry(turn).or_insert_with(|| self.dir.turn_index(turn)).get(abs)
     }
-}
 
-/// 한쪽이라도 1MB를 넘는 파일의 hash: 양쪽 크기와 hash (내용 파일이면 그 내용)
-fn large_hash(item: &Item) -> io::Result<String> {
-    let mut hasher = blake3::Hasher::new();
-    for side in [&item.before, &item.after] {
-        hasher.update(&side.len()?.unwrap_or(u64::MAX).to_le_bytes());
-        match &side.content {
-            Some(p) => {
-                hasher.update_reader(fs::File::open(p)?)?;
+    /// 원본과 그것이 불확실한지. `new`는 없는 파일, `uncertain`은 hook이 저장한 세션 시작 HEAD 내용.
+    /// 원본 기록이 없으면 (hook이 늦게 설치됐거나 실패, 기록 전에 죽어 내용 파일만 남음) 세션 전 내용을
+    /// 모르므로 없는 파일로 보고 불확실로 표시한다
+    fn baseline(&self, abs: &Path) -> (Side, bool) {
+        let Some(b) = self.baselines.get(abs) else { return (Side::default(), true) };
+        let file = self.dir.baseline_file(abs);
+        match (b.kind, b.size, &b.hash) {
+            (BaselineKind::New, ..) => (Side::default(), false),
+            (BaselineKind::TooLarge, Some(size), Some(hash)) => (Side::large(size, hash.clone()), false),
+            (BaselineKind::File | BaselineKind::Uncertain, ..) if file.is_file() => {
+                (Side::file(file), b.kind == BaselineKind::Uncertain)
             }
-            None => {
-                hasher.update(side.hash.as_deref().unwrap_or_default().as_bytes());
-            }
+            _ => (Side::default(), true),
         }
     }
-    Ok(hasher.finalize().to_hex().to_string())
 }
