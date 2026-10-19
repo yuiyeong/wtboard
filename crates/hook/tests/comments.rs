@@ -32,13 +32,17 @@ fn worktree_id(repo: &Path) -> String {
 
 fn stdout_json(out: &Output) -> Value {
     assert_eq!(out.status.code(), Some(0), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    let text = String::from_utf8(out.stdout.clone()).unwrap();
+    let text = std::str::from_utf8(&out.stdout).unwrap();
     assert_eq!(text.lines().count(), 1, "stdout: {text}");
-    serde_json::from_str(&text).unwrap()
+    serde_json::from_str(text).unwrap()
 }
 
 fn all_unsent(data: &Path, wt: &str) -> bool {
     sent_states(data, wt).iter().all(|(_, to)| to.is_none())
+}
+
+fn all_sent(data: &Path, wt: &str) -> bool {
+    sent_states(data, wt).iter().all(|(_, to)| to.is_some())
 }
 
 #[test]
@@ -98,7 +102,7 @@ fn cwd_subdir_and_symlink_match_app_worktree_id() {
 
     let json = stdout_json(&submit(data.path(), &repo.path().join("src"), Some("go")));
     assert!(json["hookSpecificOutput"]["additionalContext"].as_str().unwrap().contains("하위 폴더"));
-    assert!(sent_states(data.path(), &wt).iter().all(|(_, to)| to.is_some()));
+    assert!(all_sent(data.path(), &wt));
 }
 
 #[test]
@@ -198,7 +202,7 @@ fn overflow_attaches_rest_next_time() {
     let context = second["hookSpecificOutput"]["additionalContext"].as_str().unwrap();
     assert!(context.contains("3번") && !context.contains("1번"));
     assert!(!second["systemMessage"].as_str().unwrap().contains("남음"));
-    assert!(sent_states(data.path(), &wt).iter().all(|(_, to)| to.is_some()));
+    assert!(all_sent(data.path(), &wt));
 }
 
 #[test]
