@@ -1,9 +1,10 @@
 //! Claude Code plugin hook이 부르는 바이너리. stdin의 hook 입력을 읽어 세션 기록
 //! (`<data dir>/sessions/<session_id>/`)에 쓴다.
 //!
-//! 어떤 입력·오류에도 exit 0이고 stdout에는 아무것도 쓰지 않는다 (Claude Code가 stdout을 JSON으로
-//! 해석하고, exit 2는 tool 호출을 막는다). 오류는 stderr 한 줄.
+//! 어떤 입력·오류에도 exit 0이다 (exit 2는 tool 호출을 막는다). stdout에는 `prompt-submit`이 리뷰 코멘트를
+//! 붙일 때의 JSON 한 줄만 쓴다 (Claude Code가 stdout을 JSON으로 해석한다). 오류는 stderr 한 줄.
 mod bash;
+mod comments;
 mod edit;
 mod turn;
 
@@ -32,6 +33,8 @@ pub struct HookInput {
     pub agent_id: Option<String>,
     /// SessionStart: startup | resume | clear | compact | fork
     pub source: Option<String>,
+    /// UserPromptSubmit: 사용자가 보낸 prompt
+    pub prompt: Option<String>,
 }
 
 fn main() {
@@ -81,7 +84,17 @@ fn run(sub: &str) -> HookResult {
     }
     let dir = SessionDir::open(&data, &input.session_id)
         .ok_or_else(|| format!("잘못된 session_id: {:?}", input.session_id))?;
-    handler(&dir, &input)
+    if sub != "prompt-submit" {
+        return handler(&dir, &input);
+    }
+    // 첨부와 turn 기록은 서로의 오류에 막히지 않는다
+    let attached = comments::attach(&input, &mut io::stdout().lock());
+    let recorded = handler(&dir, &input);
+    match (attached, recorded) {
+        (Err(a), Err(r)) => Err(format!("{a}; {r}").into()),
+        (Err(e), Ok(())) | (Ok(()), Err(e)) => Err(e),
+        (Ok(()), Ok(())) => Ok(()),
+    }
 }
 
 pub fn now_ms() -> u64 {

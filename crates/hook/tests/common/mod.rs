@@ -50,3 +50,26 @@ pub fn assert_quiet_exit(out: &Output) {
 pub fn session(data_dir: &Path, id: &str) -> SessionDir {
     SessionDir::open(data_dir, id).unwrap()
 }
+
+/// 앱과 같은 방식으로 `<data>/state.sqlite`에 코멘트를 넣는다. `worktree`는 앱의 worktree id
+pub fn seed_comment(data_dir: &Path, worktree: &str, path: &str, line: u32, body: &str) -> i64 {
+    use wtboard_core::store::comments::{CommentStore, NewComment, Side};
+    let store = CommentStore::open(&data_dir.join("state.sqlite")).unwrap();
+    let new = NewComment {
+        worktree: worktree.into(),
+        path: path.into(),
+        side: Side::New,
+        line,
+        view: "branch".into(),
+        snippet: format!("line {line}"),
+        body: body.into(),
+    };
+    store.add(&new).unwrap().id
+}
+
+/// worktree의 코멘트 `(id, sent_to)`를 읽는다
+pub fn sent_states(data_dir: &Path, worktree: &str) -> Vec<(i64, Option<String>)> {
+    use wtboard_core::store::comments::CommentStore;
+    let store = CommentStore::open(&data_dir.join("state.sqlite")).unwrap();
+    store.list(worktree).unwrap().into_iter().map(|c| (c.id, c.sent_to)).collect()
+}
