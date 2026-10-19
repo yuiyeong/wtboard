@@ -15,18 +15,21 @@ interface Props {
 
 /** `브랜치 전체` / `이번 세션` (세션이 여러 개면 select) / `마지막 응답 #n` */
 export function ViewTabs({ view, sessions, session, onView, onSession }: Props) {
-  const tab = (v: View, label: string) => (
-    <button
-      onClick={() => onView(v)}
-      disabled={v !== 'branch' && !session}
-      title={v !== 'branch' && !session ? NO_SESSION : undefined}
-      className={`rounded px-2 py-1 disabled:cursor-default disabled:text-gray-300 ${
-        view === v ? 'bg-gray-800 text-white' : 'hover:bg-gray-100'
-      }`}
-    >
-      {label}
-    </button>
-  );
+  const tab = (v: View, label: string) => {
+    const disabled = v !== 'branch' && !session;
+    return (
+      <button
+        onClick={() => onView(v)}
+        disabled={disabled}
+        title={disabled ? NO_SESSION : undefined}
+        className={`rounded px-2 py-1 disabled:cursor-default disabled:text-gray-300 ${
+          view === v ? 'bg-gray-800 text-white' : 'hover:bg-gray-100'
+        }`}
+      >
+        {label}
+      </button>
+    );
+  };
   return (
     <div className="flex items-center gap-1">
       {tab('branch', '브랜치 전체')}
