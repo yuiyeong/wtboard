@@ -594,6 +594,7 @@ fn bash_revert_is_uncertain() {
     let repo = TestRepo::new();
     repo.write("b.py", "b = 1\n");
     repo.commit_all("b");
+    let start_head = repo.head();
     let root = bash_session(data.path(), &repo);
     repo.write("b.py", "b = 2\n");
 
@@ -603,7 +604,10 @@ fn bash_revert_is_uncertain() {
 
     let dir = session(data.path(), SID);
     let b = root.join("b.py");
-    assert_eq!(dir.baselines()[&b].kind, BaselineKind::Uncertain);
+    let baseline = &dir.baselines()[&b];
+    assert_eq!(baseline.kind, BaselineKind::Uncertain);
+    assert_eq!(baseline.head.as_deref(), Some(start_head.as_str()));
+    assert_eq!(baseline_text(&dir, &b), "b = 1\n");
     assert_eq!(bash_events(&dir)[0].paths, [b]);
 }
 
@@ -707,4 +711,134 @@ fn bash_snapshot_file_removed_after_post() {
     repo.write("a.txt", "x");
     assert_quiet_exit(&run_hook(data.path(), "post-bash", &input));
     assert!(bash_events(&dir).is_empty());
+}
+
+/// 한 Bash 안에서 깨끗한 파일을 고치고 커밋하면 전후 status 어디에도 안 나온다. HEAD 사이 diff로 잡는다
+#[test]
+fn bash_edit_and_commit_of_clean_file() {
+    let data = tempfile::tempdir().unwrap();
+    let repo = TestRepo::new();
+    repo.write("c.py", "c = 1\n");
+    repo.commit_all("c1");
+    let root = bash_session(data.path(), &repo);
+
+    bash(data.path(), SID, repo.path(), || {
+        repo.write("c.py", "c = 2\n");
+        repo.commit_all("c2");
+    });
+
+    let dir = session(data.path(), SID);
+    let c = root.join("c.py");
+    assert_eq!(dir.baselines()[&c].kind, BaselineKind::File);
+    assert_eq!(baseline_text(&dir, &c), "c = 1\n");
+    assert_eq!(bash_events(&dir)[0].paths, [c]);
+}
+
+#[test]
+fn bash_git_mv_records_both_paths() {
+    let data = tempfile::tempdir().unwrap();
+    let repo = TestRepo::new();
+    repo.write("old.py", "o = 1\n");
+    repo.commit_all("old");
+    let root = bash_session(data.path(), &repo);
+
+    bash(data.path(), SID, repo.path(), || {
+        repo.git(&["mv", "old.py", "new.py"]);
+    });
+
+    let dir = session(data.path(), SID);
+    let (old, new) = (root.join("old.py"), root.join("new.py"));
+    let baselines = dir.baselines();
+    assert_eq!(baselines[&old].kind, BaselineKind::File);
+    assert_eq!(baseline_text(&dir, &old), "o = 1\n");
+    assert_eq!(baselines[&new].kind, BaselineKind::New);
+    let paths: BTreeSet<_> = bash_events(&dir)[0].paths.iter().cloned().collect();
+    assert_eq!(paths, BTreeSet::from([old, new]));
+}
+
+/// `git rm --cached`는 같은 경로를 `1 D.`와 `?` 두 줄로 낸다. 원본은 pre HEAD 내용
+#[test]
+fn bash_rm_cached_keeps_pre_head_content() {
+    let data = tempfile::tempdir().unwrap();
+    let repo = TestRepo::new();
+    repo.write("a.py", "a = 1\n");
+    repo.commit_all("a");
+    let root = bash_session(data.path(), &repo);
+
+    bash(data.path(), SID, repo.path(), || {
+        repo.git(&["rm", "-q", "--cached", "a.py"]);
+    });
+
+    let dir = session(data.path(), SID);
+    let a = root.join("a.py");
+    assert_eq!(dir.baselines()[&a].kind, BaselineKind::File);
+    assert_eq!(baseline_text(&dir, &a), "a = 1\n");
+    assert_eq!(bash_events(&dir)[0].paths, [a]);
+}
+
+#[test]
+fn bash_delete_of_clean_tracked_file() {
+    let data = tempfile::tempdir().unwrap();
+    let repo = TestRepo::new();
+    repo.write("a.py", "a = 1\n");
+    repo.commit_all("a");
+    let root = bash_session(data.path(), &repo);
+
+    bash(data.path(), SID, repo.path(), || repo.remove("a.py"));
+
+    let dir = session(data.path(), SID);
+    let a = root.join("a.py");
+    assert_eq!(dir.baselines()[&a].kind, BaselineKind::File);
+    assert_eq!(baseline_text(&dir, &a), "a = 1\n");
+    assert_eq!(bash_events(&dir)[0].paths, [a]);
+}
+
+#[test]
+fn bash_delete_of_untracked_file_is_uncertain() {
+    let data = tempfile::tempdir().unwrap();
+    let repo = TestRepo::new();
+    let root = bash_session(data.path(), &repo);
+    repo.write("tmp.log", "x");
+
+    bash(data.path(), SID, repo.path(), || repo.remove("tmp.log"));
+
+    let dir = session(data.path(), SID);
+    let log = root.join("tmp.log");
+    assert_eq!(dir.baselines()[&log].kind, BaselineKind::Uncertain);
+    assert_eq!(baseline_text(&dir, &log), "");
+    assert_eq!(bash_events(&dir)[0].paths, [log]);
+}
+
+/// 여러 파일의 원본을 한 번에 읽는다 (`cat-file --batch`). 1MB를 넘는 원본은 크기와 hash만
+#[test]
+fn bash_many_files_and_large_original() {
+    let data = tempfile::tempdir().unwrap();
+    let repo = TestRepo::new();
+    let big = vec![b'x'; wtboard_core::domain::MAX_DIFF_BYTES as usize + 10];
+    repo.write("big.bin", &big);
+    for i in 0..5 {
+        repo.write(&format!("f {i}.txt"), format!("{i}\n"));
+    }
+    repo.commit_all("files");
+    let root = bash_session(data.path(), &repo);
+
+    bash(data.path(), SID, repo.path(), || {
+        repo.write("big.bin", "small now");
+        for i in 0..5 {
+            repo.write(&format!("f {i}.txt"), "changed\n");
+        }
+    });
+
+    let dir = session(data.path(), SID);
+    let baselines = dir.baselines();
+    for i in 0..5 {
+        let f = root.join(format!("f {i}.txt"));
+        assert_eq!(baselines[&f].kind, BaselineKind::File);
+        assert_eq!(baseline_text(&dir, &f), format!("{i}\n"));
+    }
+    let b = &baselines[&root.join("big.bin")];
+    assert_eq!(b.kind, BaselineKind::TooLarge);
+    assert_eq!(b.size, Some(big.len() as u64));
+    assert_eq!(b.hash.as_deref(), Some(blake3::hash(&big).to_hex().as_str()));
+    assert_eq!(bash_events(&dir)[0].paths.len(), 6);
 }
