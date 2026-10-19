@@ -20,6 +20,8 @@ pub struct Config {
     pub watch: WatchConfig,
     #[serde(default)]
     pub sessions: SessionsConfig,
+    #[serde(default)]
+    pub review: ReviewConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -59,6 +61,19 @@ pub struct SessionsConfig {
 impl Default for SessionsConfig {
     fn default() -> Self {
         Self { keep_days: 7 }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct ReviewConfig {
+    /// false면 hook이 prompt에 리뷰 코멘트를 붙이지 않는다
+    pub auto_attach_comments: bool,
+}
+
+impl Default for ReviewConfig {
+    fn default() -> Self {
+        Self { auto_attach_comments: true }
     }
 }
 

@@ -61,3 +61,11 @@ fn poll_interval_has_a_floor_of_five_seconds() {
     let minute = Config::parse("[watch]\nfallback_poll_secs = 60\n").unwrap();
     assert_eq!(minute.watch.poll_interval(), Duration::from_secs(60));
 }
+
+#[test]
+fn review_auto_attach_default_true() {
+    assert!(Config::parse("").unwrap().review.auto_attach_comments);
+    let off = Config::parse("[review]\nauto_attach_comments = false\n").unwrap();
+    assert!(!off.review.auto_attach_comments);
+    assert!(Config::parse("[review]\n").unwrap().review.auto_attach_comments);
+}

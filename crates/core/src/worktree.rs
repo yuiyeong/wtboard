@@ -13,7 +13,8 @@ use crate::git::changes::list_changes;
 use crate::git::patch::file_patch;
 use crate::git::{Git, GitError};
 use crate::profile::Profile;
-use crate::store::viewed::{StoreError, ViewedStore};
+use crate::store::viewed::ViewedStore;
+use crate::store::StoreError;
 use crate::watch::{Target, WatchLayout};
 
 #[derive(Debug, thiserror::Error)]
