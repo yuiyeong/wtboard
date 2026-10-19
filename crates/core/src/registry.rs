@@ -7,7 +7,7 @@ use serde::Serialize;
 use crate::gh::Gh;
 use crate::git::worktrees::common_dir;
 use crate::git::Git;
-use crate::repo::{Repo, RepoOptions, RepoSummary, Sink};
+use crate::repo::{Repo, RepoOptions, RepoSummary, Sink, TrayWorktree};
 use crate::store::config::Config;
 use crate::store::viewed::ViewedStore;
 use crate::worktree::Worktree;
@@ -104,6 +104,11 @@ impl Registry {
 
     pub fn worktree(&self, id: &str) -> Option<Arc<Worktree>> {
         self.repos.iter().find_map(|r| r.worktree(id))
+    }
+
+    /// 메뉴바에 보일 열린 worktree. sidebar 순서, git을 부르지 않는다
+    pub fn tray_worktrees(&self) -> Vec<TrayWorktree> {
+        self.repos.iter().flat_map(|r| r.tray_worktrees()).collect()
     }
 
     /// 열린 모든 worktree의 root. 세션 경로를 가장 깊은 worktree에 귀속시키는 데 쓴다

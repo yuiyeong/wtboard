@@ -364,3 +364,16 @@ fn unhashable_checked_file_does_not_block_open() {
         .expect("worktree should open");
     assert_eq!(state(&wt, "src/new.py"), ViewedState::Changed);
 }
+
+#[test]
+fn tray_info_matches_summary() {
+    let repo = feat_repo();
+    repo.write("src/a.py", "a = 2\n");
+    repo.write("src/b.py", "b = 2\n");
+    let wt = open(&repo);
+    wt.set_viewed("src/a.py", true, None).unwrap();
+    let (branch, unviewed) = wt.tray_info();
+    assert_eq!(branch, "feat");
+    assert_eq!(unviewed, wt.summary().unviewed_files);
+    assert_eq!(unviewed, 1);
+}

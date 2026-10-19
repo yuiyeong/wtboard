@@ -1,11 +1,12 @@
 mod comments;
+mod tray;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 use wtboard_core::domain::FilePatch;
 use wtboard_core::gh::Gh;
 use wtboard_core::registry::{EntryError, Registry};
@@ -21,6 +22,8 @@ use wtboard_core::store::viewed::ViewedStore;
 use wtboard_core::watch::{spawn_sessions_watcher, SessionsWatchHandle};
 use wtboard_core::worktree::{now_ms, FileEntry, Worktree, WorktreeChanged};
 
+use tray::TrayUpdater;
+
 /// Registry는 background thread에서 열고 끝나면 채운다. command는 채워질 때까지 기다린다
 struct AppState {
     registry: OnceLock<Result<Registry, String>>,
@@ -31,8 +34,8 @@ struct AppState {
     /// registry와 함께 열린다. registry를 기다린 뒤에는 채워져 있다
     comments: OnceLock<Arc<CommentStore>>,
     /// 앱 설정(tray 등). 열 때 `comments`와 같이 채운다
-    #[allow(dead_code)]
     settings: OnceLock<SettingsStore>,
+    tray: TrayUpdater,
 }
 
 #[derive(Serialize)]
@@ -130,7 +133,12 @@ async fn set_viewed(
     viewed: bool,
     hash: Option<String>,
 ) -> Result<(), String> {
-    blocking(move || worktree(&app, &worktree_id)?.set_viewed(&path, viewed, hash).map_err(|e| e.to_string())).await
+    blocking(move || {
+        worktree(&app, &worktree_id)?.set_viewed(&path, viewed, hash).map_err(|e| e.to_string())?;
+        tray(&app).request();
+        Ok(())
+    })
+    .await
 }
 
 /// git을 부르는 일은 tokio worker를 막지 않게 blocking pool에서 한다
@@ -141,6 +149,10 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
 /// 아직 여는 중이면 열릴 때까지 기다린다. blocking pool 안에서만 부른다
 fn registry(app: &AppHandle) -> Result<&Registry, String> {
     app.state::<AppState>().inner().registry.wait().as_ref().map_err(Clone::clone)
+}
+
+fn tray(app: &AppHandle) -> &TrayUpdater {
+    &app.state::<AppState>().inner().tray
 }
 
 fn worktree(app: &AppHandle, id: &str) -> Result<Arc<Worktree>, String> {
@@ -185,6 +197,7 @@ fn watch_sessions(handle: &AppHandle, data: PathBuf) -> Result<SessionsWatchHand
                 roots.iter().filter(|r| owned.contains(*r)).map(|r| r.to_string_lossy().into_owned()).collect();
             if !worktree_ids.is_empty() {
                 let _ = app.emit("session-updated", SessionUpdated { session_ids, worktree_ids });
+                tray(&app).request();
             }
         }),
     )
@@ -220,9 +233,11 @@ fn open_registry(handle: &AppHandle) -> Result<Registry, String> {
     let sink = Sink {
         changed: Arc::new(move |ev: WorktreeChanged| {
             let _ = changed.emit("worktree-changed", ev);
+            tray(&changed).request();
         }),
         updated: Arc::new(move || {
             let _ = updated.emit("worktrees-updated", ());
+            tray(&updated).request();
         }),
     };
     // 상태는 data dir(config 파일이 있는 폴더)에 둔다. 열 수 없으면 이번 실행만 메모리에 둔다
@@ -236,6 +251,7 @@ fn open_registry(handle: &AppHandle) -> Result<Registry, String> {
     // 전송된 지 오래된 코멘트를 지운다
     let cutoff = now_ms().saturating_sub(config.sessions.keep_days.saturating_mul(86_400_000));
     let _ = comments.purge_sent_before(cutoff);
+    tray::apply_saved_on_top(handle, &settings);
     let state = handle.state::<AppState>();
     let _ = state.comments.set(Arc::new(comments));
     let _ = state.settings.set(settings);
@@ -262,14 +278,24 @@ fn main() {
                 session_cache: SessionViewCache::default(),
                 comments: OnceLock::new(),
                 settings: OnceLock::new(),
+                tray: TrayUpdater::spawn(app.handle().clone()),
             });
+            tray::build(app.handle())?;
             let handle = app.handle().clone();
             // 레포가 많거나 크면 수 초 걸린다. 창을 막지 않는다
             std::thread::spawn(move || {
                 let result = open_registry(&handle);
                 let _ = handle.state::<AppState>().registry.set(result);
             });
+            tray(app.handle()).request();
             Ok(())
+        })
+        // 창 닫기 = 숨기기. 앱은 메뉴바에 남는다
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             list_repos,
@@ -285,8 +311,14 @@ fn main() {
             comments::copy_comments,
             comments::mark_comments_sent,
         ])
-        .run(tauri::generate_context!())
-        .expect("wtboard 실행 실패");
+        .build(tauri::generate_context!())
+        .expect("wtboard 실행 실패")
+        .run(|app, event| {
+            // Dock 아이콘을 누르면 숨긴 창을 다시 보인다
+            if let RunEvent::Reopen { .. } = event {
+                tray::show_window(app);
+            }
+        });
 }
 
 #[cfg(test)]

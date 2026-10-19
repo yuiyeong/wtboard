@@ -149,6 +149,11 @@ impl State {
             Some(_) => ViewedState::Changed,
         }
     }
+
+    /// 변경 파일 중 봤음이 아닌 수 (미확인 + 다시 바뀜)
+    fn unviewed_count(&self) -> usize {
+        self.files.keys().filter(|p| self.viewed_state(p) != ViewedState::Viewed).count()
+    }
 }
 
 /// 재계산 상태와 따로 쌓이는 정보. lock 순서: state → meta (반대로 잡지 않는다)
@@ -289,7 +294,7 @@ impl Worktree {
             base: st.base.name.clone(),
             base_source: st.base.source,
             changed_files: st.files.len(),
-            unviewed_files: st.files.keys().filter(|p| st.viewed_state(p) != ViewedState::Viewed).count(),
+            unviewed_files: st.unviewed_count(),
             profile: self.profile,
             last_changed_at,
             slow_list_ms: (list_ms > slow_ms).then_some(list_ms),
@@ -302,6 +307,12 @@ impl Worktree {
 
     fn branch(&self) -> Option<String> {
         current_branch(&self.git)
+    }
+
+    /// 메뉴바용 (`branch_key`, 미확인 수). git을 부르지 않는다. 미확인 수는 `summary()`의 `unviewed_files`와 같다
+    pub fn tray_info(&self) -> (String, usize) {
+        let st = self.state.lock().unwrap();
+        (st.branch_key.clone(), st.unviewed_count())
     }
 
     /// PR base를 물어야 하면 이 브랜치를 "물었음"으로 표시하고 그 브랜치를 돌려준다.

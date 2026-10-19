@@ -51,6 +51,16 @@ pub struct RepoSummary {
     pub worktrees: Vec<WorktreeSummary>,
 }
 
+/// 메뉴바의 worktree 한 줄. git을 부르지 않고 만든다
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrayWorktree {
+    pub id: String,
+    pub repo: String,
+    /// 현재 브랜치. detached HEAD면 worktree 폴더 이름
+    pub branch: String,
+    pub unviewed: usize,
+}
+
 struct Opened {
     path: PathBuf,
     branch: Option<String>,
@@ -153,6 +163,24 @@ impl Repo {
     pub fn roots(&self) -> Vec<PathBuf> {
         let opened = self.worktrees.lock().unwrap();
         opened.iter().filter_map(|o| o.result.as_ref().ok()).map(|(wt, _)| wt.layout().root.clone()).collect()
+    }
+
+    /// 열린 worktree의 메뉴바 줄. worktree 목록 lock 밖에서 센다 (재계산 중인 worktree를 기다릴 수 있다)
+    pub fn tray_worktrees(&self) -> Vec<TrayWorktree> {
+        let opened: Vec<Arc<Worktree>> =
+            self.worktrees.lock().unwrap().iter().filter_map(|o| o.result.as_ref().ok()).map(|(wt, _)| wt.clone()).collect();
+        opened
+            .into_iter()
+            .map(|wt| {
+                let (branch, unviewed) = wt.tray_info();
+                let branch = if branch.is_empty() {
+                    wt.layout().root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+                } else {
+                    branch
+                };
+                TrayWorktree { id: wt.id().to_owned(), repo: self.name.clone(), branch, unviewed }
+            })
+            .collect()
     }
 
     fn open_worktree(self: &Arc<Self>, entry: &WorktreeEntry) -> Opened {

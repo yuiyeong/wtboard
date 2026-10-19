@@ -99,3 +99,17 @@ fn roots_are_the_opened_worktree_roots() {
     assert_eq!(roots.len(), 3);
     assert!(roots.contains(&wt.canonicalize().unwrap().to_string_lossy().into_owned()));
 }
+
+#[test]
+fn detached_uses_folder_name() {
+    let repo = TestRepo::new();
+    let detached = repo.path().parent().unwrap().join("wt-detached");
+    repo.git(&["worktree", "add", "-q", "--detach", detached.to_str().unwrap()]);
+    let reg = registry(&[(repo.path(), Some("main"))]);
+    let tray = reg.tray_worktrees();
+    assert_eq!(tray.len(), 2);
+    assert_eq!(tray[0].branch, "main");
+    assert_eq!(tray[1].branch, "wt-detached");
+    assert_eq!(tray[1].repo, tray[0].repo);
+    assert_eq!(tray[1].id, detached.canonicalize().unwrap().to_string_lossy());
+}
