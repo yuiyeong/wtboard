@@ -25,3 +25,8 @@ export function withViewed(files: ChangedFile[], path: string, viewed: boolean):
 export function countLabel(w: WorktreeSummary): string {
   return w.unviewedFiles > 0 ? `${w.unviewedFiles}/${w.changedFiles}` : `${w.changedFiles}`;
 }
+
+/** 봤음 저장 실패 표시. Tauri command는 문자열로 reject한다 */
+export function viewedErrorText(error: unknown): string {
+  return `봤음 저장 실패: ${error instanceof Error ? error.message : String(error)}`;
+}

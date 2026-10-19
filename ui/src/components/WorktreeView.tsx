@@ -27,7 +27,7 @@ export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: 
     queryKey: ['files', worktree.id, 'branch'],
     queryFn: () => listFiles(worktree.id, 'branch'),
   });
-  const onSetViewed = useSetViewed(worktree.id);
+  const { onSetViewed, error: viewedError } = useSetViewed(worktree.id);
   const progress = useMemo(() => viewedProgress(files.data ?? []), [files.data]);
   const allViewed = progress.total > 0 && progress.viewed === progress.total;
   const { tree, ordered } = useMemo(() => {
@@ -50,6 +50,11 @@ export function WorktreeView({ repo, worktree }: { repo: RepoSummary; worktree: 
           {worktree.baseSource === 'pr' && ' (PR)'}
         </span>
         <span className="flex-1" />
+        {viewedError && (
+          <span className="min-w-0 truncate text-xs text-red-600" title={viewedError}>
+            {viewedError}
+          </span>
+        )}
         <span className={`tabular-nums ${allViewed ? 'text-green-600' : 'text-gray-500'}`}>
           확인 {progress.viewed}/{progress.total}
         </span>
