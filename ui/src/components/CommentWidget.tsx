@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { Comment } from '../api';
+import { focusedInput, setEdit, startEdit, useDraftStore } from '../drafts';
 import { statusLabel } from '../lib/comments';
-import type { Drafts } from '../useDrafts';
 
 /** 성공하면 resolve, 실패하면 오류로 reject한다. 참조가 안정적이어야 FileDiff memo가 유지된다 */
 export type OnUpdateComment = (vars: { id: number; body: string }) => Promise<unknown>;
@@ -9,7 +9,7 @@ export type OnDeleteComment = (id: number) => Promise<unknown>;
 
 /**
  * 코멘트 입력 (새 코멘트·수정 공용). Cmd+Enter 저장, Esc 취소.
- * 본문은 부르는 쪽(`Drafts`)이 갖는다. diff가 바뀌어 이 widget이 다시 mount되어도 쓰던 글이 남게 하려고.
+ * 본문은 `useDraftStore`에 있다. diff가 바뀌어 이 widget이 다시 mount되어도 쓰던 글이 남게 하려고.
  * 저장이 실패하면 닫지 않고 아래에 오류를 보인다. 닫는 것은 `onSave`를 넘긴 쪽이 한다
  */
 export function CommentInput({
@@ -18,15 +18,13 @@ export function CommentInput({
   onSave,
   onCancel,
   focusId,
-  focused,
 }: {
   body: string;
   onChange: (body: string) => void;
   onSave: (body: string) => Promise<unknown>;
   onCancel: () => void;
-  /** `Drafts.focused`에서 이 입력을 가리키는 값 */
+  /** `focusedInput`에서 이 입력을 가리키는 값 */
   focusId: string;
-  focused: RefObject<string | null>;
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,10 +34,10 @@ export function CommentInput({
   const textarea = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     const el = textarea.current;
-    if (!el || focused.current !== focusId) return;
+    if (!el || focusedInput.current !== focusId) return;
     el.focus();
     el.setSelectionRange(el.value.length, el.value.length);
-  }, [focused, focusId]);
+  }, [focusId]);
 
   const save = async () => {
     if (saving || empty) return;
@@ -71,10 +69,10 @@ export function CommentInput({
         rows={3}
         value={body}
         onChange={(e) => onChange(e.target.value)}
-        onFocus={() => (focused.current = focusId)}
+        onFocus={() => (focusedInput.current = focusId)}
         onBlur={(e) => {
           // 다시 mount되느라 DOM에서 빠질 때가 아니라 사용자가 다른 곳을 눌렀을 때만 놓는다
-          if (e.currentTarget.isConnected && focused.current === focusId) focused.current = null;
+          if (e.currentTarget.isConnected && focusedInput.current === focusId) focusedInput.current = null;
         }}
         onKeyDown={onKeyDown}
         className="block w-full resize-y rounded border border-gray-300 p-1.5 text-sm focus:border-blue-400 focus:outline-none"
@@ -99,13 +97,11 @@ export function CommentInput({
 interface SavedProps {
   onUpdate: OnUpdateComment;
   onDelete: OnDeleteComment;
-  /** 수정 중인 본문은 여기에 둔다 */
-  drafts: Drafts;
 }
 
 /** 저장된 코멘트 하나. 미전송은 파란 테두리, 전송됨은 회색. 미전송만 `수정` */
-export function SavedComment({ comment, onUpdate, onDelete, drafts }: SavedProps & { comment: Comment }) {
-  const editing = drafts.edits.get(comment.id);
+export function SavedComment({ comment, onUpdate, onDelete }: SavedProps & { comment: Comment }) {
+  const editing = useDraftStore((s) => s.edits[comment.id]);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const unsent = comment.sentAt === null;
@@ -115,13 +111,12 @@ export function SavedComment({ comment, onUpdate, onDelete, drafts }: SavedProps
       <CommentInput
         body={editing}
         focusId={`edit:${comment.id}`}
-        focused={drafts.focused}
-        onChange={(body) => drafts.setEdit(comment.id, body)}
+        onChange={(body) => setEdit(comment.id, body)}
         onSave={async (body) => {
           await onUpdate({ id: comment.id, body });
-          drafts.setEdit(comment.id, null);
+          setEdit(comment.id, null);
         }}
-        onCancel={() => drafts.setEdit(comment.id, null)}
+        onCancel={() => setEdit(comment.id, null)}
       />
     );
   }
@@ -146,7 +141,7 @@ export function SavedComment({ comment, onUpdate, onDelete, drafts }: SavedProps
       >
         <span className="flex-1">{statusLabel(comment)}</span>
         {unsent && (
-          <button onClick={() => drafts.startEdit(comment.id, comment.body)} className="hover:underline">
+          <button onClick={() => startEdit(comment.id, comment.body)} className="hover:underline">
             수정
           </button>
         )}

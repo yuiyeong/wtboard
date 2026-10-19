@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getChangeKey, parseDiff, type ChangeData } from 'react-diff-view';
+import type { View } from '../api';
 import {
   anchorOf,
   byPath,
@@ -10,6 +11,8 @@ import {
   sortForList,
   statusLabel,
   unsentByPath,
+  type Anchor,
+  type Draft,
 } from './comments';
 import { commentFixture } from './fixtures';
 
@@ -184,29 +187,36 @@ describe('placeDraft (쓰던 입력 widget을 둘 줄)', () => {
   const diffOf = (header: string, lines: string[]) =>
     parseDiff(['diff --git a/a.ts b/a.ts', '--- a/a.ts', '+++ b/a.ts', header, ...lines, ''].join('\n'))[0].hunks[0]
       .changes;
+  const draftAt = (anchor: Anchor, view: View = 'branch'): Draft => ({ anchor, body: '', view });
 
   it('hunk header가 바뀌어도 (뒤에 줄이 늘어도) 같은 줄에 남는다', () => {
-    const draft = anchorOf(ctx, 'new');
+    const draft = draftAt(anchorOf(ctx, 'new'));
     const grown = diffOf('@@ -1,3 +1,4 @@', [' ctx', '-old line', '+new line', '+more', ' tail']);
-    expect(placeDraft(draft, grown)).toBe(getChangeKey(grown[0]));
+    expect(placeDraft(draft, grown, 'branch')).toBe(getChangeKey(grown[0]));
   });
 
   it('change key가 아니라 (side, line)과 내용으로 따라간다', () => {
-    const draft = anchorOf(tail, 'new'); // new 3, 처음 key는 N3
+    const draft = draftAt(anchorOf(tail, 'new')); // new 3, 처음 key는 N3
     const shifted = diffOf('@@ -1,4 +1,3 @@', [' ctx', '-old line', '-old 2', '+new line', ' tail']);
-    const key = placeDraft(draft, shifted);
+    const key = placeDraft(draft, shifted, 'branch');
     expect(key).toBe(getChangeKey(shifted[4])); // tail은 이제 옛 4번 줄이라 key가 N4
     expect(key).not.toBe(getChangeKey(tail));
   });
 
   it('삭제 줄은 old side 줄 번호로 맞춘다', () => {
-    expect(placeDraft(anchorOf(del, 'old'), changes)).toBe(getChangeKey(del));
+    expect(placeDraft(draftAt(anchorOf(del, 'old')), changes, 'branch')).toBe(getChangeKey(del));
   });
 
   it('그 줄이 없거나 내용이 바뀌면 null (위치가 바뀐 코멘트 묶음에 둔다)', () => {
     const edited = diffOf('@@ -1,3 +1,3 @@', [' ctx', '-old line', '+new line edited', ' tail']);
-    expect(placeDraft(anchorOf(ins, 'new'), edited)).toBeNull();
-    expect(placeDraft({ side: 'new', line: 99, snippet: 'tail' }, changes)).toBeNull();
+    expect(placeDraft(draftAt(anchorOf(ins, 'new')), edited, 'branch')).toBeNull();
+    expect(placeDraft(draftAt({ side: 'new', line: 99, snippet: 'tail' }), changes, 'branch')).toBeNull();
+  });
+
+  it('old side는 연 view에서만 맞춘다 (view마다 before가 다르다). new side는 view와 상관없다', () => {
+    expect(placeDraft(draftAt(anchorOf(del, 'old'), 'session'), changes, 'branch')).toBeNull();
+    expect(placeDraft(draftAt(anchorOf(del, 'old'), 'session'), changes, 'session')).toBe(getChangeKey(del));
+    expect(placeDraft(draftAt(anchorOf(ins, 'new'), 'session'), changes, 'branch')).toBe(getChangeKey(ins));
   });
 });
 
@@ -214,13 +224,13 @@ describe('nextDraft', () => {
   const a = anchorOf(ctx, 'new');
   const b = anchorOf(tail, 'new');
 
-  it('열린 입력이 없거나 비어 있으면 새 줄에 빈 입력을 연다', () => {
-    expect(nextDraft(null, b)).toEqual({ anchor: b, body: '' });
-    expect(nextDraft({ anchor: a, body: '  ' }, b)).toEqual({ anchor: b, body: '' });
+  it('열린 입력이 없거나 비어 있으면 새 줄에 빈 입력을 연다 (연 view와 함께)', () => {
+    expect(nextDraft(undefined, b, 'turn')).toEqual({ anchor: b, body: '', view: 'turn' });
+    expect(nextDraft({ anchor: a, body: '  ', view: 'branch' }, b, 'turn')).toEqual({ anchor: b, body: '', view: 'turn' });
   });
 
   it('쓰던 글이 있으면 버리지 않고 그대로 둔다', () => {
-    const typing = { anchor: a, body: '고쳐 주세요' };
-    expect(nextDraft(typing, b)).toBe(typing);
+    const typing: Draft = { anchor: a, body: '고쳐 주세요', view: 'branch' };
+    expect(nextDraft(typing, b, 'turn')).toBe(typing);
   });
 });
