@@ -22,8 +22,8 @@ WTBOARD_CONFIG=<dir>/config.toml pnpm tauri dev   # fixture로 실행
 
 ## 구조
 
-- `crates/core`: git CLI 읽기 래퍼(`git/`), 변경 목록·diff·hash, 감시(`watch/`), worktree 상태(`worktree.rs`), 레포 하나(`repo.rs`), config 전체(`registry.rs`), profile(`profile.rs`), PR base(`gh.rs`), 설정(`store/`)
-- `crates/app`: Tauri command(`list_repos`, `list_files`, `get_patch`)와 `worktree-changed`, `worktrees-updated` event
+- `crates/core`: git CLI 읽기 래퍼(`git/`), 변경 목록·diff·hash, 감시(`watch/`), worktree 상태(`worktree.rs`), 레포 하나(`repo.rs`), config 전체(`registry.rs`), profile(`profile.rs`), PR base(`gh.rs`), 설정(`store/config`)과 봤음 상태(`store/viewed`, SQLite `~/.wtboard/state.sqlite`)
+- `crates/app`: Tauri command(`list_repos`, `list_files`, `get_patch`, `set_viewed`)와 `worktree-changed`, `worktrees-updated` event
 - `ui/`: React + TanStack Query + react-diff-view
 
 ## 지켜야 할 것
