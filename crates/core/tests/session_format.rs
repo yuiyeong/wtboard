@@ -32,6 +32,10 @@ fn event(turn: u32, path: &str) -> Event {
     }
 }
 
+fn hex(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex().to_string()
+}
+
 fn set_mtime(path: &Path, ms: u64) {
     let f = fs::File::options().write(true).open(path).unwrap();
     f.set_modified(UNIX_EPOCH + Duration::from_millis(ms)).unwrap();
@@ -164,6 +168,9 @@ fn baseline_kinds() {
     assert_eq!(all[unc_empty].kind, BaselineKind::Uncertain);
     assert_eq!(fs::read(dir.baseline_file(unc_empty)).unwrap_or_default(), b"");
     assert_eq!(all[big].kind, BaselineKind::TooLarge);
+    assert_eq!(all[big].size, Some(large.len() as u64));
+    assert_eq!(all[big].hash.as_deref(), Some(hex(&large).as_str()));
+    assert_eq!((all[unc].size, all[unc].hash.as_deref()), (None, None));
     // 큰 파일은 내용을 복사하지 않는다
     assert!(fs::metadata(dir.baseline_file(big)).map(|m| m.len()).unwrap_or(0) == 0);
 
@@ -176,10 +183,14 @@ fn baseline_copy_of_large_file_is_too_large() {
     let data = tempfile::tempdir().unwrap();
     let work = tempfile::tempdir().unwrap();
     let src = work.path().join("big.bin");
-    fs::write(&src, vec![b'x'; MAX_DIFF_BYTES as usize + 1]).unwrap();
+    let large = vec![b'x'; MAX_DIFF_BYTES as usize + 1];
+    fs::write(&src, &large).unwrap();
     let dir = SessionDir::open(data.path(), "s1").unwrap();
     assert!(dir.ensure_baseline(&src, BaselineContent::CopyOf(&src)).unwrap());
-    assert_eq!(dir.baselines()[&src].kind, BaselineKind::TooLarge);
+    let b = &dir.baselines()[&src];
+    assert_eq!(b.kind, BaselineKind::TooLarge);
+    assert_eq!(b.size, Some(large.len() as u64));
+    assert_eq!(b.hash.as_deref(), Some(hex(&large).as_str()));
 }
 
 #[test]
@@ -200,10 +211,17 @@ fn turn_snapshot_content_deleted_too_large() {
     let (a, gone, big) =
         (work.path().join("a.py"), work.path().join("gone.py"), work.path().join("big.bin"));
     fs::write(&a, "v2\n").unwrap();
-    fs::write(&big, vec![b'x'; MAX_DIFF_BYTES as usize + 1]).unwrap();
+    let large = vec![b'y'; MAX_DIFF_BYTES as usize + 7];
+    fs::write(&big, &large).unwrap();
     let dir = SessionDir::open(data.path(), "s1").unwrap();
 
     dir.snapshot_turn(1, &[a.clone(), gone.clone(), big.clone()]).unwrap();
+    let names: Vec<_> = fs::read_dir(dir.root().join("turns/1"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|n| n.ends_with(".txt") || n.ends_with(".jsonl"))
+        .collect();
+    assert_eq!(names, vec!["index.jsonl"]);
 
     match dir.turn_snapshot(1, &a) {
         Some(Snapshot::Content(p)) => {
@@ -213,7 +231,10 @@ fn turn_snapshot_content_deleted_too_large() {
         other => panic!("{other:?}"),
     }
     assert_eq!(dir.turn_snapshot(1, &gone), Some(Snapshot::Deleted));
-    assert_eq!(dir.turn_snapshot(1, &big), Some(Snapshot::TooLarge));
+    assert_eq!(
+        dir.turn_snapshot(1, &big),
+        Some(Snapshot::TooLarge { size: large.len() as u64, hash: hex(&large) })
+    );
     assert_eq!(dir.turn_snapshot(1, &work.path().join("other.py")), None);
     assert_eq!(dir.turn_snapshot(2, &a), None);
 
@@ -221,6 +242,75 @@ fn turn_snapshot_content_deleted_too_large() {
     fs::remove_file(&a).unwrap();
     dir.snapshot_turn(1, std::slice::from_ref(&a)).unwrap();
     assert_eq!(dir.turn_snapshot(1, &a), Some(Snapshot::Deleted));
+}
+
+#[test]
+fn snapshot_turn_isolates_bad_paths() {
+    use std::os::unix::fs::PermissionsExt;
+    let data = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let w = work.path();
+    fs::create_dir(w.join("d")).unwrap();
+    fs::write(w.join("d/x.py"), "x\n").unwrap();
+    fs::write(w.join("a.py"), "a\n").unwrap();
+    fs::write(w.join("locked.py"), "secret\n").unwrap();
+    fs::set_permissions(w.join("locked.py"), fs::Permissions::from_mode(0o000)).unwrap();
+    let dir = SessionDir::open(data.path(), "s1").unwrap();
+
+    // d/x.py가 먼저 와서 turns/1/.../d 가 폴더가 된 뒤 d 자체(폴더)가 온다
+    let paths = [
+        PathBuf::from("/"),
+        w.join("d/x.py"),
+        w.join("d"),
+        w.join("locked.py"),
+        w.join("gone.py"),
+        w.join("a.py"),
+    ];
+    let result = dir.snapshot_turn(1, &paths);
+    fs::set_permissions(w.join("locked.py"), fs::Permissions::from_mode(0o644)).unwrap();
+    result.unwrap();
+
+    let content = |p: &Path| match dir.turn_snapshot(1, p) {
+        Some(Snapshot::Content(f)) => fs::read_to_string(f).unwrap(),
+        other => panic!("{p:?}: {other:?}"),
+    };
+    assert_eq!(content(&w.join("d/x.py")), "x\n");
+    assert_eq!(content(&w.join("a.py")), "a\n");
+    assert_eq!(dir.turn_snapshot(1, &w.join("d")), Some(Snapshot::Deleted));
+    assert_eq!(dir.turn_snapshot(1, &w.join("gone.py")), Some(Snapshot::Deleted));
+    assert!(dir.root().join("turns/1/index.jsonl").is_file());
+}
+
+#[test]
+fn turn_index_is_not_spoofed_by_newline_in_path() {
+    let data = tempfile::tempdir().unwrap();
+    let dir = SessionDir::open(data.path(), "s1").unwrap();
+    dir.snapshot_turn(1, &[PathBuf::from("/nope/x\n/nope/y")]).unwrap();
+    assert_eq!(dir.turn_snapshot(1, Path::new("/nope/x\n/nope/y")), Some(Snapshot::Deleted));
+    assert_eq!(dir.turn_snapshot(1, Path::new("/nope/y")), None);
+}
+
+#[test]
+fn append_event_keeps_only_valid_paths() {
+    let data = tempfile::tempdir().unwrap();
+    let dir = SessionDir::open(data.path(), "s1").unwrap();
+    let nfd = "/a/\u{1112}\u{1161}\u{11AB}";
+    let mut ev = event(1, "rel/x");
+    ev.paths.extend([PathBuf::from("/a/../b"), PathBuf::from(nfd), PathBuf::from("/ok")]);
+    dir.append_event(&ev).unwrap();
+    // 남는 경로가 없는 Edit·Bash event는 쓰지 않는다
+    dir.append_event(&event(1, "rel/only")).unwrap();
+    let mut bash = event(1, "/x/../y");
+    bash.kind = EventKind::Bash;
+    dir.append_event(&bash).unwrap();
+    // turn event는 경로가 없어도 쓴다
+    let turn_end = Event { kind: EventKind::TurnEnd, tool: None, paths: vec![], ..event(1, "/") };
+    dir.append_event(&turn_end).unwrap();
+
+    let events = dir.events();
+    assert_eq!(events.len(), 2, "{events:?}");
+    assert_eq!(events[0].paths, vec![PathBuf::from("/a/한"), PathBuf::from("/ok")]);
+    assert_eq!(events[1], turn_end);
 }
 
 #[test]

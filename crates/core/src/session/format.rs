@@ -4,7 +4,7 @@
 //! - `meta.json`: turn 경계 hook만 쓴다 (한 세션 안에서 겹치지 않는다). tmp에 쓰고 rename
 //! - `events.jsonl`: 줄 하나를 `O_APPEND` write 한 번으로
 //! - `baseline/<abs>`: `create_new`로 먼저 만든 쪽이 이긴다. 이긴 쪽만 `baseline.jsonl`에 한 줄 append
-//! - `turns/<n>/<abs>`, `turns/<n>/deleted.txt`, `turns/<n>/too_large.txt`: turn 경계 hook만 쓴다
+//! - `turns/<n>/<abs>`, `turns/<n>/index.jsonl`: turn 경계 hook만 쓴다
 //!
 //! 경로 key는 NFC 절대 경로다. 내용 파일은 절대 경로에서 앞의 `/`를 뗀 경로에 둔다.
 use std::collections::HashMap;
@@ -24,8 +24,7 @@ const EVENTS: &str = "events.jsonl";
 const BASELINE_DIR: &str = "baseline";
 const BASELINES: &str = "baseline.jsonl";
 const TURNS: &str = "turns";
-const DELETED: &str = "deleted.txt";
-const TOO_LARGE: &str = "too_large.txt";
+const TURN_INDEX: &str = "index.jsonl";
 
 /// `[A-Za-z0-9_-]+`만 허용한다. 폴더 이름으로 쓰므로 `/`, `..`가 들어오면 세션 폴더 밖에 쓰게 된다
 pub fn is_valid_session_id(id: &str) -> bool {
@@ -96,6 +95,11 @@ pub struct Baseline {
     pub kind: BaselineKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub head: Option<String>,
+    /// `TooLarge`일 때 원본 크기와 blake3 hash
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
 }
 
 /// `ensure_baseline`에 넘기는 원본
@@ -115,7 +119,23 @@ pub enum Snapshot {
     /// 세션 폴더 안의 내용 파일
     Content(PathBuf),
     Deleted,
-    TooLarge,
+    /// 1MB를 넘어 내용 대신 크기와 blake3 hash만 남김
+    TooLarge { size: u64, hash: String },
+}
+
+/// `turns/<n>/index.jsonl`의 한 줄. 내용 파일이 없는 경로만 적는다
+#[derive(Serialize, Deserialize)]
+struct TurnEntry {
+    path: PathBuf,
+    #[serde(flatten)]
+    state: TurnState,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum TurnState {
+    Deleted,
+    TooLarge { size: u64, hash: String },
 }
 
 /// 세션 폴더 하나. `open`은 경로만 정하고, 폴더는 처음 쓸 때 만든다
@@ -148,22 +168,22 @@ impl SessionDir {
     /// tmp에 쓰고 rename한다. 앱이 반쯤 쓴 meta를 읽지 않는다
     pub fn write_meta(&self, meta: &Meta) -> io::Result<()> {
         fs::create_dir_all(&self.root)?;
-        let tmp = self.root.join(format!("{META}.{}.tmp", std::process::id()));
-        let written = fs::write(&tmp, serde_json::to_vec(meta)?)
-            .and_then(|()| fs::rename(&tmp, self.root.join(META)));
-        if written.is_err() {
-            let _ = fs::remove_file(&tmp);
-        }
-        written
+        write_atomic(&self.root.join(META), &serde_json::to_vec(meta)?)
     }
 
+    /// 경로는 `valid_abs_path`를 통과한 것만 NFC로 남긴다.
+    /// 남은 경로가 없는 `Edit`·`Bash` event는 쓰지 않는다 (turn event는 원래 경로가 없다)
     pub fn append_event(&self, event: &Event) -> io::Result<()> {
-        self.append_line(EVENTS, event)
+        let paths: Vec<PathBuf> = event.paths.iter().filter_map(|p| valid_abs_path(p)).collect();
+        if paths.is_empty() && matches!(event.kind, EventKind::Edit | EventKind::Bash) {
+            return Ok(());
+        }
+        self.append_line(EVENTS, &Event { paths, ..event.clone() })
     }
 
     /// 못 읽는 줄은 건너뛴다
     pub fn events(&self) -> Vec<Event> {
-        self.read_lines(EVENTS)
+        read_lines(&self.root.join(EVENTS))
     }
 
     /// 마지막 활동 시각 (Unix ms). meta는 turn 경계에만 쓰므로 `events.jsonl`의 mtime을 본다
@@ -185,9 +205,8 @@ impl SessionDir {
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Ok(false),
             Err(e) => return Err(e),
         };
-        let recorded = write_baseline(&mut out, content).and_then(|(kind, head)| {
-            self.append_line(BASELINES, &Baseline { path, kind, head })
-        });
+        let recorded = write_baseline(&mut out, path, content)
+            .and_then(|b| self.append_line(BASELINES, &b));
         if let Err(e) = recorded {
             drop(out);
             let _ = fs::remove_file(&file);
@@ -199,7 +218,7 @@ impl SessionDir {
     /// 경로별 원본 기록. 같은 경로가 두 번 있으면 먼저 쓴 줄
     pub fn baselines(&self) -> HashMap<PathBuf, Baseline> {
         let mut map = HashMap::new();
-        for b in self.read_lines::<Baseline>(BASELINES) {
+        for b in read_lines::<Baseline>(&self.root.join(BASELINES)) {
             map.entry(b.path.clone()).or_insert(b);
         }
         map
@@ -210,58 +229,34 @@ impl SessionDir {
     }
 
     /// turn이 끝난 시점의 내용을 기록한다. 그 turn이 건드린 경로를 한 번에 넘긴다
-    /// (`deleted.txt`, `too_large.txt`는 이번 호출의 목록으로 바뀐다). 잘못된 경로는 건너뛴다
+    /// (`index.jsonl`은 이번 호출의 목록으로 바뀐다). 경로마다 따로 처리해서 한 경로의 오류
+    /// (읽기 실패, 그사이 사라짐 등)가 다른 경로를 막지 않는다. 그런 경로와 잘못된 경로는 건너뛴다
     pub fn snapshot_turn(&self, turn: u32, paths: &[PathBuf]) -> io::Result<()> {
         let dir = self.turn_dir(turn);
         fs::create_dir_all(&dir)?;
-        let (mut deleted, mut too_large) = (String::new(), String::new());
+        let mut index = Vec::new();
         for path in paths.iter().filter_map(|p| valid_abs_path(p)) {
-            let dest = mirror(&dir, &path);
-            let list = match fs::metadata(&path) {
-                Ok(m) if !m.is_file() => &mut deleted,
-                Ok(m) if m.len() > MAX_DIFF_BYTES => &mut too_large,
-                Ok(_) => {
-                    if let Some(parent) = dest.parent() {
-                        fs::create_dir_all(parent)?;
-                    }
-                    fs::copy(&path, &dest)?;
-                    continue;
-                }
-                Err(e) if e.kind() == io::ErrorKind::NotFound => &mut deleted,
-                Err(e) => return Err(e),
-            };
-            // 같은 turn을 다시 찍을 때 예전 내용 파일이 남아 있으면 Content로 읽힌다
-            if let Err(e) = fs::remove_file(&dest) {
-                if e.kind() != io::ErrorKind::NotFound {
-                    return Err(e);
-                }
+            if let Ok(Some(state)) = snapshot_file(&path, &mirror(&dir, &path)) {
+                index.extend(json_line(&TurnEntry { path, state })?);
             }
-            list.push_str(&path.to_string_lossy());
-            list.push('\n');
         }
-        fs::write(dir.join(DELETED), deleted)?;
-        fs::write(dir.join(TOO_LARGE), too_large)
+        write_atomic(&dir.join(TURN_INDEX), &index)
     }
 
-    /// turn `n`에 기록된 경로 하나. 그 turn이 건드리지 않았으면 `None`
+    /// turn `n`에 기록된 경로 하나. 그 turn이 건드리지 않았으면 `None`.
+    /// index를 먼저 본다. 같은 turn을 다시 찍었을 때 남은 예전 내용 파일보다 이번 상태가 앞선다
     pub fn turn_snapshot(&self, turn: u32, path: &Path) -> Option<Snapshot> {
         let dir = self.turn_dir(turn);
         let path = nfc(path);
+        let index = read_lines::<TurnEntry>(&dir.join(TURN_INDEX));
+        if let Some(entry) = index.into_iter().find(|e| e.path == path) {
+            return Some(match entry.state {
+                TurnState::Deleted => Snapshot::Deleted,
+                TurnState::TooLarge { size, hash } => Snapshot::TooLarge { size, hash },
+            });
+        }
         let file = mirror(&dir, &path);
-        if file.is_file() {
-            return Some(Snapshot::Content(file));
-        }
-        let listed = |name: &str| {
-            fs::read_to_string(dir.join(name))
-                .is_ok_and(|s| s.lines().any(|l| Path::new(l) == path))
-        };
-        if listed(TOO_LARGE) {
-            Some(Snapshot::TooLarge)
-        } else if listed(DELETED) {
-            Some(Snapshot::Deleted)
-        } else {
-            None
-        }
+        file.is_file().then_some(Snapshot::Content(file))
     }
 
     fn turn_dir(&self, turn: u32) -> PathBuf {
@@ -270,8 +265,7 @@ impl SessionDir {
 
     /// 줄 전체를 write 한 번으로 쓴다. `O_APPEND`라 병렬 hook의 줄이 섞이지 않는다
     fn append_line(&self, name: &str, value: &impl Serialize) -> io::Result<()> {
-        let mut line = serde_json::to_vec(value)?;
-        line.push(b'\n');
+        let line = json_line(value)?;
         fs::create_dir_all(&self.root)?;
         let mut f = OpenOptions::new().create(true).append(true).open(self.root.join(name))?;
         let n = f.write(&line)?;
@@ -280,43 +274,104 @@ impl SessionDir {
         }
         Ok(())
     }
-
-    fn read_lines<T: DeserializeOwned>(&self, name: &str) -> Vec<T> {
-        let Ok(bytes) = fs::read(self.root.join(name)) else { return Vec::new() };
-        bytes.split(|b| *b == b'\n').filter_map(|l| serde_json::from_slice(l).ok()).collect()
-    }
 }
 
-/// 원본 내용을 쓰고 기록할 kind와 head를 돌려준다
-fn write_baseline(
-    out: &mut File,
-    content: BaselineContent,
-) -> io::Result<(BaselineKind, Option<String>)> {
-    Ok(match content {
-        BaselineContent::New => (BaselineKind::New, None),
-        BaselineContent::Bytes(bytes) => (write_small(out, bytes, BaselineKind::File)?, None),
-        BaselineContent::Uncertain { head, bytes } => {
-            (write_small(out, bytes.unwrap_or_default(), BaselineKind::Uncertain)?, head)
+fn json_line(value: &impl Serialize) -> io::Result<Vec<u8>> {
+    let mut line = serde_json::to_vec(value)?;
+    line.push(b'\n');
+    Ok(line)
+}
+
+/// 못 읽는 줄은 건너뛴다
+fn read_lines<T: DeserializeOwned>(path: &Path) -> Vec<T> {
+    let Ok(bytes) = fs::read(path) else { return Vec::new() };
+    bytes.split(|b| *b == b'\n').filter_map(|l| serde_json::from_slice(l).ok()).collect()
+}
+
+/// tmp에 쓰고 rename한다. 읽는 쪽이 반쯤 쓴 파일을 보지 않는다
+fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(format!(".{}.tmp", std::process::id()));
+    let tmp = PathBuf::from(tmp);
+    let written = fs::write(&tmp, bytes).and_then(|()| fs::rename(&tmp, path));
+    if written.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    written
+}
+
+/// 원본 내용을 쓰고 `baseline.jsonl`에 적을 기록을 돌려준다
+fn write_baseline(out: &mut File, path: PathBuf, content: BaselineContent) -> io::Result<Baseline> {
+    let mut b = Baseline { path, kind: BaselineKind::New, head: None, size: None, hash: None };
+    match content {
+        BaselineContent::New => {}
+        BaselineContent::Bytes(bytes) => {
+            copy_or_hash(out, bytes, bytes.len() as u64, BaselineKind::File, &mut b)?
         }
-        BaselineContent::CopyOf(src) => match File::open(src) {
-            Ok(mut f) if f.metadata()?.len() <= MAX_DIFF_BYTES => {
-                io::copy(&mut f, out)?;
-                (BaselineKind::File, None)
+        BaselineContent::Uncertain { head, bytes } => {
+            b.head = head;
+            let bytes = bytes.unwrap_or_default();
+            copy_or_hash(out, bytes, bytes.len() as u64, BaselineKind::Uncertain, &mut b)?
+        }
+        // 일반 파일만 연다 (FIFO는 열면 멈춘다). 그사이 없어졌거나 파일이 아니면 `New`
+        BaselineContent::CopyOf(src) => match fs::metadata(src) {
+            Ok(m) if m.is_file() => {
+                copy_or_hash(out, File::open(src)?, m.len(), BaselineKind::File, &mut b)?
             }
-            Ok(_) => (BaselineKind::TooLarge, None),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => (BaselineKind::New, None),
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => return Err(e),
         },
-    })
+    }
+    Ok(b)
 }
 
-/// 1MB를 넘으면 쓰지 않고 `TooLarge`
-fn write_small(out: &mut File, bytes: &[u8], kind: BaselineKind) -> io::Result<BaselineKind> {
-    if bytes.len() as u64 > MAX_DIFF_BYTES {
-        return Ok(BaselineKind::TooLarge);
+/// 1MB 이하면 `out`에 쓰고 `kind`로, 넘으면 쓰지 않고 크기와 hash를 남겨 `TooLarge`로 기록한다
+fn copy_or_hash(
+    out: &mut File,
+    mut src: impl io::Read,
+    len: u64,
+    kind: BaselineKind,
+    b: &mut Baseline,
+) -> io::Result<()> {
+    if len > MAX_DIFF_BYTES {
+        let (size, hash) = hash_reader(src)?;
+        (b.kind, b.size, b.hash) = (BaselineKind::TooLarge, Some(size), Some(hash));
+    } else {
+        io::copy(&mut src, out)?;
+        b.kind = kind;
     }
-    out.write_all(bytes)?;
-    Ok(kind)
+    Ok(())
+}
+
+/// 파일 하나를 `dest`에 복사한다. 내용 파일 대신 index에 적을 경로면 그 상태를 돌려준다
+fn snapshot_file(path: &Path, dest: &Path) -> io::Result<Option<TurnState>> {
+    let meta = match fs::metadata(path) {
+        Ok(m) if m.is_file() => m,
+        // 폴더·FIFO 등은 파일로서는 없는 것이다
+        Ok(_) => return Ok(Some(TurnState::Deleted)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Some(TurnState::Deleted)),
+        Err(e) => return Err(e),
+    };
+    if meta.len() > MAX_DIFF_BYTES {
+        let (size, hash) = hash_reader(File::open(path)?)?;
+        return Ok(Some(TurnState::TooLarge { size, hash }));
+    }
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    match fs::copy(path, dest) {
+        Ok(_) => Ok(None),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Some(TurnState::Deleted)),
+        Err(e) => Err(e),
+    }
+}
+
+/// 읽은 바이트 수와 blake3 hash (hex)
+fn hash_reader(src: impl io::Read) -> io::Result<(u64, String)> {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update_reader(src)?;
+    Ok((hasher.count(), hasher.finalize().to_hex().to_string()))
 }
 
 /// 절대 경로를 `base` 아래로 옮긴다. `Normal` component만 이어서 잘못된 경로도 `base` 밖을 가리키지 않는다
