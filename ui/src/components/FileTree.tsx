@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { ChangedFile } from '../api';
-import { fileAnchorId } from '../lib/anchor';
+import { scrollToFile } from '../lib/anchor';
 import type { TreeNode } from '../lib/tree';
 
 const STATUS_LABEL: Record<ChangedFile['status'], string> = {
@@ -74,7 +74,7 @@ function Nodes({ nodes, depth, collapsed, toggle, unsent }: NodesProps) {
             className="flex w-full items-center gap-2 py-0.5 pr-3 text-left hover:bg-gray-100"
             style={pad}
             title={f.path}
-            onClick={() => document.getElementById(fileAnchorId(f.path))?.scrollIntoView({ block: 'start' })}
+            onClick={() => scrollToFile(f.path)}
           >
             <span className={`w-3 shrink-0 text-xs ${viewed.color}`}>{viewed.mark}</span>
             <span className={`w-3 font-mono text-xs ${STATUS_COLOR[f.status]}`}>{STATUS_LABEL[f.status]}</span>

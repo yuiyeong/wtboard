@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Comment } from '../api';
-import { fileAnchorId } from '../lib/anchor';
+import { scrollToFile } from '../lib/anchor';
 import { firstLine, sortForList, statusLabel } from '../lib/comments';
 import { useCommentActions } from '../useComments';
 
@@ -34,7 +34,7 @@ export function CommentsPopover({ worktreeId, comments, listedPaths, autoAttach 
 
   const jump = (c: Comment) => {
     if (!listedPaths.has(c.path)) return;
-    document.getElementById(fileAnchorId(c.path))?.scrollIntoView({ block: 'start' });
+    scrollToFile(c.path);
     setOpen(false);
   };
 

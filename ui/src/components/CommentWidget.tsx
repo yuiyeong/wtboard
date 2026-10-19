@@ -3,7 +3,7 @@ import type { Comment } from '../api';
 import { statusLabel } from '../lib/comments';
 
 /** 성공하면 resolve, 실패하면 오류로 reject한다. 참조가 안정적이어야 FileDiff memo가 유지된다 */
-export type OnUpdateComment = (id: number, body: string) => Promise<unknown>;
+export type OnUpdateComment = (vars: { id: number; body: string }) => Promise<unknown>;
 export type OnDeleteComment = (id: number) => Promise<unknown>;
 
 /**
@@ -102,7 +102,7 @@ export function SavedComment({
       <CommentInput
         initial={comment.body}
         onSave={async (body) => {
-          await onUpdate(comment.id, body);
+          await onUpdate({ id: comment.id, body });
           setEditing(false);
         }}
         onCancel={() => setEditing(false)}

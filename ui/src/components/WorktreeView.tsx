@@ -1,10 +1,9 @@
-import { useCallback, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   listFiles,
   listSessions,
   type Comment,
-  type NewComment,
   type RepoSummary,
   type View,
   type WorktreeSummary,
@@ -84,12 +83,6 @@ export function WorktreeView({ repo, worktree, autoAttachComments }: Props) {
   const unsentPaths = useMemo(() => unsentByPath(commentList), [commentList]);
   // mutateAsync는 참조가 안정적이라 FileDiff memo를 깨지 않는다
   const { add, update, remove } = useCommentActions(worktree.id);
-  const { mutateAsync: addAsync } = add;
-  const { mutateAsync: updateAsync } = update;
-  const { mutateAsync: removeAsync } = remove;
-  const onAddComment = useCallback((c: NewComment) => addAsync(c), [addAsync]);
-  const onUpdateComment = useCallback((id: number, body: string) => updateAsync({ id, body }), [updateAsync]);
-  const onDeleteComment = useCallback((id: number) => removeAsync(id), [removeAsync]);
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -161,9 +154,9 @@ export function WorktreeView({ repo, worktree, autoAttachComments }: Props) {
               viewType={viewType}
               onSetViewed={onSetViewed}
               comments={commentsByPath.get(f.path) ?? NO_COMMENTS}
-              onAdd={onAddComment}
-              onUpdate={onUpdateComment}
-              onDelete={onDeleteComment}
+              onAdd={add.mutateAsync}
+              onUpdate={update.mutateAsync}
+              onDelete={remove.mutateAsync}
             />
           ))}
         </main>
