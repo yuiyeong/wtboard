@@ -34,7 +34,7 @@ pub fn render(worktree_root: &str, comments: &[Comment], cap: Option<usize>) -> 
     let mut len = text.chars().count();
     let mut included = Vec::new();
     for (i, comment) in comments.iter().enumerate() {
-        let entry = format!("\n{}. {}", i + 1, entry(comment));
+        let entry = format!("\n{}. {}", i + 1, render_entry(comment));
         let entry_len = entry.chars().count();
         let left = comments.len() - i - 1;
         // 이 코멘트를 넣고도 남은 수 안내와 닫는 tag까지 cap 안에 들어가야 한다.
@@ -89,7 +89,7 @@ pub fn attach(
 }
 
 /// 코멘트 하나. 번호 뒤부터 (`path:line`, fence된 snippet, body)
-fn entry(c: &Comment) -> String {
+fn render_entry(c: &Comment) -> String {
     let location = match c.side {
         Side::New => format!("{}:{}", escape(&c.path), c.line),
         Side::Old => format!("{} (삭제된 줄, 원래 {}번째 줄)", escape(&c.path), c.line),
