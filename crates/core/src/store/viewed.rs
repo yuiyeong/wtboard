@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection};
+
+use crate::worktree::now_ms;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -45,7 +46,7 @@ impl ViewedStore {
     }
 
     fn init(conn: Connection) -> Result<Self, StoreError> {
-        conn.execute(SCHEMA, [])?;
+        conn.execute_batch(SCHEMA)?;
         Ok(Self { conn: Mutex::new(conn) })
     }
 
@@ -58,20 +59,19 @@ impl ViewedStore {
     }
 
     pub fn set(&self, worktree: &str, branch: &str, path: &str, hash: &str) -> Result<(), StoreError> {
-        let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
         self.conn.lock().unwrap().execute(
             "INSERT INTO viewed (worktree, branch, path, hash, viewed_at) VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT (worktree, branch, path) DO UPDATE SET hash = excluded.hash, viewed_at = excluded.viewed_at",
-            params![worktree, branch, path, hash, now_ms],
+            params![worktree, branch, path, hash, now_ms() as i64],
         )?;
         Ok(())
     }
 
     pub fn remove(&self, worktree: &str, branch: &str, path: &str) -> Result<(), StoreError> {
-        self.conn
-            .lock()
-            .unwrap()
-            .execute("DELETE FROM viewed WHERE worktree = ?1 AND branch = ?2 AND path = ?3", params![worktree, branch, path])?;
+        self.conn.lock().unwrap().execute(
+            "DELETE FROM viewed WHERE worktree = ?1 AND branch = ?2 AND path = ?3",
+            params![worktree, branch, path],
+        )?;
         Ok(())
     }
 }

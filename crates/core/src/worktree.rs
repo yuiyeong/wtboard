@@ -409,7 +409,7 @@ fn affects_other_files(path: &str) -> bool {
     matches!(name, ".gitattributes" | ".gitignore")
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
