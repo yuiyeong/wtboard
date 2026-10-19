@@ -33,6 +33,35 @@ describe('anchorOf', () => {
   });
 });
 
+describe('긴 줄 (서버는 snippet을 500 code point에서 자른다)', () => {
+  const longDiff = (content: string) =>
+    ['diff --git a/a.ts b/a.ts', '--- a/a.ts', '+++ b/a.ts', '@@ -1 +1 @@', '-x', `+${content}`, ''].join('\n');
+  const longChange = (content: string) => parseDiff(longDiff(content))[0].hunks[0].changes[1];
+  const serverTruncate = (s: string) => Array.from(s).slice(0, 500).join('');
+
+  it('501자 넘는 줄도 anchorOf snippet이 500자이고 서버가 자른 코멘트가 맞는다', () => {
+    const change = longChange('a'.repeat(700));
+    const { snippet, line, side } = anchorOf(change, 'new');
+    expect(snippet).toBe('a'.repeat(500));
+    const c = commentFixture({ side, line, snippet: serverTruncate('a'.repeat(700)) });
+    expect(placeComments([c], [change], 'branch').byChangeKey.get(getChangeKey(change))).toEqual([c]);
+  });
+
+  it('경계에 astral 문자(이모지)가 있어도 code point로 센다', () => {
+    const content = 'a'.repeat(499) + '😀' + 'tail';
+    const change = longChange(content);
+    expect(anchorOf(change, 'new').snippet).toBe('a'.repeat(499) + '😀');
+    const c = commentFixture({ side: 'new', line: 1, snippet: serverTruncate(content) });
+    expect(placeComments([c], [change], 'branch').outdated).toEqual([]);
+  });
+
+  it('긴 줄도 앞 500자가 다르면 outdated', () => {
+    const change = longChange('a'.repeat(700));
+    const c = commentFixture({ side: 'new', line: 1, snippet: 'b'.repeat(500) });
+    expect(placeComments([c], [change], 'branch').outdated).toEqual([c]);
+  });
+});
+
 describe('placeComments', () => {
   it('같은 줄·같은 내용이면 그 change에 둔다', () => {
     const a = commentFixture({ id: 1, side: 'new', line: 2, snippet: 'new line' });

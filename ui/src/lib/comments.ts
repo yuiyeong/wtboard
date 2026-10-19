@@ -4,10 +4,20 @@ import { formatHHMM } from './time';
 
 export const commentsKey = (worktreeId: string) => ['comments', worktreeId] as const;
 
+/** 서버가 snippet을 자르는 글자 수 (`MAX_SNIPPET_CHARS`). Rust `chars()`와 같게 UTF-16이 아니라 code point로 센다 */
+const MAX_SNIPPET_CHARS = 500;
+
+/** 줄 내용을 서버가 저장하는 snippet 형태로 자른다 */
+function snippetOf(content: string): string {
+  // 짧은 줄은 code point 배열을 만들지 않는다 (UTF-16 길이 >= code point 수)
+  if (content.length <= MAX_SNIPPET_CHARS) return content;
+  return Array.from(content).slice(0, MAX_SNIPPET_CHARS).join('');
+}
+
 export interface Anchor {
   side: Side;
   line: number;
-  /** 그 줄의 내용. parseDiff의 `content`는 `+`/`-`/공백 접두가 없다 */
+  /** 그 줄의 내용 (500자까지). parseDiff의 `content`는 `+`/`-`/공백 접두가 없다 */
   snippet: string;
 }
 
@@ -17,9 +27,9 @@ export interface Anchor {
  * `_clicked`는 누른 쪽인데 위치는 change 종류만으로 정해지므로 쓰지 않는다
  */
 export function anchorOf(change: ChangeData, _clicked: Side): Anchor {
-  if (change.type === 'delete') return { side: 'old', line: change.lineNumber, snippet: change.content };
-  if (change.type === 'insert') return { side: 'new', line: change.lineNumber, snippet: change.content };
-  return { side: 'new', line: change.newLineNumber, snippet: change.content };
+  if (change.type === 'delete') return { side: 'old', line: change.lineNumber, snippet: snippetOf(change.content) };
+  if (change.type === 'insert') return { side: 'new', line: change.lineNumber, snippet: snippetOf(change.content) };
+  return { side: 'new', line: change.newLineNumber, snippet: snippetOf(change.content) };
 }
 
 export interface PlacedComments {
@@ -44,7 +54,7 @@ export function placeComments(comments: Comment[], changes: ChangeData[], view: 
   const outdated: Comment[] = [];
   for (const c of comments) {
     const change = c.side === 'old' && c.view !== view ? undefined : bySideLine.get(`${c.side}:${c.line}`);
-    if (!change || change.content !== c.snippet) {
+    if (!change || snippetOf(change.content) !== c.snippet) {
       outdated.push(c);
       continue;
     }
