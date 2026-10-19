@@ -292,3 +292,22 @@ fn viewed_deleted_file_stays_viewed() {
     wt.handle(&[Target::List]).unwrap();
     assert_eq!(state(&wt, "src/b.py"), ViewedState::Viewed);
 }
+
+#[test]
+fn entry_json_is_flat_with_viewed_state() {
+    let repo = feat_repo();
+    repo.write("src/a.py", "a = 2\n");
+    let wt = open(&repo);
+    let entry = wt.entries().into_iter().next().expect("entry");
+    let json = serde_json::to_value(&entry).unwrap();
+    for key in ["path", "status", "additions", "deletions", "collapsed", "viewed"] {
+        assert!(json.get(key).is_some(), "missing top-level key {key}: {json}");
+    }
+    assert!(json.get("file").is_none(), "file must be flattened: {json}");
+
+    let names: Vec<_> = [ViewedState::Unviewed, ViewedState::Viewed, ViewedState::Changed]
+        .iter()
+        .map(|s| serde_json::to_value(s).unwrap())
+        .collect();
+    assert_eq!(names, ["none", "viewed", "changed"]);
+}

@@ -2,13 +2,13 @@ use std::sync::{Arc, OnceLock};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
-use wtboard_core::domain::{ChangedFile, FilePatch};
+use wtboard_core::domain::FilePatch;
 use wtboard_core::gh::Gh;
 use wtboard_core::registry::{EntryError, Registry};
 use wtboard_core::repo::{RepoSummary, Sink};
 use wtboard_core::store::config::Config;
 use wtboard_core::store::viewed::ViewedStore;
-use wtboard_core::worktree::{Worktree, WorktreeChanged};
+use wtboard_core::worktree::{FileEntry, Worktree, WorktreeChanged};
 
 /// Registry는 background thread에서 열고 끝나면 채운다. command는 채워질 때까지 기다린다
 struct AppState {
@@ -32,15 +32,27 @@ async fn list_repos(app: AppHandle) -> Result<ReposResponse, String> {
 }
 
 #[tauri::command]
-async fn list_files(app: AppHandle, worktree_id: String, view: String) -> Result<Vec<ChangedFile>, String> {
+async fn list_files(app: AppHandle, worktree_id: String, view: String) -> Result<Vec<FileEntry>, String> {
     ensure_branch_view(&view)?;
-    blocking(move || Ok(worktree(&app, &worktree_id)?.files())).await
+    blocking(move || Ok(worktree(&app, &worktree_id)?.entries())).await
 }
 
 #[tauri::command]
 async fn get_patch(app: AppHandle, worktree_id: String, view: String, path: String) -> Result<FilePatch, String> {
     ensure_branch_view(&view)?;
     blocking(move || worktree(&app, &worktree_id)?.patch(&path).map_err(|e| e.to_string())).await
+}
+
+/// 봤음은 view와 무관하다. hash는 화면이 보고 있는 diff의 hash다 (없으면 현재 diff)
+#[tauri::command]
+async fn set_viewed(
+    app: AppHandle,
+    worktree_id: String,
+    path: String,
+    viewed: bool,
+    hash: Option<String>,
+) -> Result<(), String> {
+    blocking(move || worktree(&app, &worktree_id)?.set_viewed(&path, viewed, hash).map_err(|e| e.to_string())).await
 }
 
 /// git을 부르는 일은 tokio worker를 막지 않게 blocking pool에서 한다
@@ -112,7 +124,7 @@ fn main() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![list_repos, list_files, get_patch])
+        .invoke_handler(tauri::generate_handler![list_repos, list_files, get_patch, set_viewed])
         .run(tauri::generate_context!())
         .expect("wtboard 실행 실패");
 }

@@ -8,7 +8,7 @@ use common::{clone_on_feat_with_develop, gh_stub, TestRepo};
 use wtboard_core::git::base::BaseSource;
 use wtboard_core::store::viewed::ViewedStore;
 use wtboard_core::watch::{spawn_watcher, spawn_watcher_with, WatchHandle};
-use wtboard_core::worktree::{ChangeScope, Worktree, WorktreeChanged};
+use wtboard_core::worktree::{ChangeScope, ViewedState, Worktree, WorktreeChanged};
 
 fn start(path: &Path) -> (WatchHandle, mpsc::Receiver<WorktreeChanged>) {
     let wt = Worktree::open(path, Some("main".into())).unwrap();
@@ -91,4 +91,29 @@ fn deleted_worktree_folder_calls_on_gone() {
 
     std::fs::remove_dir_all(&wt_path).unwrap();
     rx.recv_timeout(Duration::from_secs(3)).expect("on_gone not called");
+}
+
+#[test]
+fn edit_to_checked_file_flips_to_changed_within_one_second() {
+    let repo = TestRepo::new();
+    repo.git(&["checkout", "-q", "-b", "feat"]);
+    repo.write("README.md", "hello\nchanged\n");
+    let wt = Worktree::open(repo.path(), Some("main".into())).unwrap();
+    wt.set_viewed("README.md", true, None).unwrap();
+    let (tx, rx) = mpsc::channel();
+    let _h = spawn_watcher(wt.clone(), Duration::from_secs(30), Arc::new(move |ev| {
+        let _ = tx.send(ev);
+    }))
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(300)); // FSEvents stream 시작 대기
+
+    let started = Instant::now();
+    repo.write("README.md", "hello\nedited again\n"); // +/- 수는 같고 내용만 다르다
+    let ev = rx.recv_timeout(Duration::from_secs(3)).expect("no event");
+    let elapsed = started.elapsed();
+
+    assert_eq!((ev.scope, ev.changed_paths), (ChangeScope::File, vec!["README.md".to_string()]));
+    assert!(elapsed < Duration::from_secs(1), "took {elapsed:?}");
+    let entry = wt.entries().into_iter().find(|e| e.file.path == "README.md").expect("README.md in list");
+    assert_eq!(entry.viewed, ViewedState::Changed);
 }
