@@ -73,3 +73,10 @@ pub fn sent_states(data_dir: &Path, worktree: &str) -> Vec<(i64, Option<String>)
     let store = CommentStore::open(&data_dir.join("state.sqlite")).unwrap();
     store.list(worktree).unwrap().into_iter().map(|c| (c.id, c.sent_to)).collect()
 }
+
+/// worktree의 코멘트 `(id, sent_turn)`을 읽는다
+pub fn sent_turns(data_dir: &Path, worktree: &str) -> Vec<(i64, Option<u32>)> {
+    use wtboard_core::store::comments::CommentStore;
+    let store = CommentStore::open(&data_dir.join("state.sqlite")).unwrap();
+    store.list(worktree).unwrap().into_iter().map(|c| (c.id, c.sent_turn)).collect()
+}

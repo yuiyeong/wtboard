@@ -3,6 +3,8 @@
 //!
 //! 어떤 입력·오류에도 exit 0이다 (exit 2는 tool 호출을 막는다). stdout에는 `prompt-submit`이 리뷰 코멘트를
 //! 붙일 때의 JSON 한 줄만 쓴다 (Claude Code가 stdout을 JSON으로 해석한다). 오류는 stderr 한 줄.
+//! 예외는 `version`: hook이 아니라 앱이 옛 binary를 감지하려고 부르는 subcommand로, stdin을 읽지 않고
+//! `wtboard-hook <버전> schema <N>` 한 줄을 stdout에 쓴다.
 mod bash;
 mod comments;
 mod edit;
@@ -16,6 +18,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use wtboard_core::session::SessionDir;
+use wtboard_core::store::db::SCHEMA_VERSION;
 use wtboard_core::store::data_dir;
 
 type HookResult = Result<(), Box<dyn Error>>;
@@ -63,6 +66,10 @@ fn main() {
 }
 
 fn run(sub: &str) -> HookResult {
+    if sub == "version" {
+        writeln!(io::stdout(), "wtboard-hook {} schema {}", env!("CARGO_PKG_VERSION"), SCHEMA_VERSION)?;
+        return Ok(());
+    }
     let handler: Handler = match sub {
         "session-start" => turn::session_start,
         "prompt-submit" => turn::prompt_submit,
@@ -88,7 +95,7 @@ fn run(sub: &str) -> HookResult {
         return handler(&dir, &input);
     }
     // 첨부와 turn 기록은 서로의 오류에 막히지 않는다
-    let attached = comments::attach(&input, &mut io::stdout().lock());
+    let attached = comments::attach(&input, &dir, &mut io::stdout().lock());
     let recorded = handler(&dir, &input);
     match (attached, recorded) {
         (Err(a), Err(r)) => Err(format!("{a}; {r}").into()),

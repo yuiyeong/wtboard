@@ -965,3 +965,15 @@ fn snapshot_failure_still_advances_turn() {
     assert!(!out.stderr.is_empty());
     assert!(!dir.read_meta().unwrap().turn_open);
 }
+
+#[test]
+fn version_prints_schema_without_reading_stdin() {
+    let data = tempfile::tempdir().unwrap();
+    let out = run_with_stdin(hook_command(data.path(), &["version"]), b"");
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        format!("wtboard-hook {} schema 2\n", env!("CARGO_PKG_VERSION"))
+    );
+    assert!(out.stderr.is_empty(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+}

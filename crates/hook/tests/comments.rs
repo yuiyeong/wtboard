@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use wtboard_core::store::db;
 use wtboard_core::worktree::Worktree;
 
-use common::{assert_quiet_exit, run_hook, seed_comment, sent_states, session, TestRepo};
+use common::{assert_quiet_exit, run_hook, seed_comment, sent_states, sent_turns, session, TestRepo};
 
 const SID: &str = "sess-1";
 
@@ -233,4 +233,24 @@ fn attach_keeps_index_untouched() {
     stdout_json(&submit(data.path(), repo.path(), Some("go")));
     let after = (fs::read(&index).unwrap(), fs::metadata(&index).unwrap().modified().unwrap());
     assert_eq!(before, after);
+}
+
+#[test]
+fn sent_turn_follows_prompt_turn() {
+    let repo = TestRepo::new();
+    let data = tempfile::tempdir().unwrap();
+    let wt = worktree_id(repo.path());
+    let first = seed_comment(data.path(), &wt, "a.rs", 1, "첫째");
+
+    stdout_json(&submit(data.path(), repo.path(), Some("go")));
+    assert_eq!(sent_turns(data.path(), &wt), vec![(first, Some(1))]);
+    assert_eq!(session(data.path(), SID).read_meta().unwrap().turn, 1);
+
+    // 같은 세션의 두 번째 prompt (`--resume`)가 여는 turn은 2
+    let second = seed_comment(data.path(), &wt, "b.rs", 2, "둘째");
+    stdout_json(&submit(data.path(), repo.path(), Some("again")));
+    let mut turns = sent_turns(data.path(), &wt);
+    turns.sort();
+    assert_eq!(turns, vec![(first, Some(1)), (second, Some(2))]);
+    assert_eq!(session(data.path(), SID).read_meta().unwrap().turn, 2);
 }
