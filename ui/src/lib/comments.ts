@@ -116,16 +116,33 @@ export function openComments(comments: CommentItem[]): CommentItem[] {
   return comments.filter((c) => c.resolvedAt === null);
 }
 
-/** 전송됨(해결 안 됨) 중 응답이 있는 수 */
-export function replyCount(comments: CommentItem[]): number {
-  return comments.filter((c) => c.sentAt !== null && c.resolvedAt === null && c.replyTurn !== null).length;
+/** 전송됨(해결 안 됨)이고 응답 turn이 있다: `응답 #n`을 보이는 조건 */
+export function hasReply(c: CommentItem): c is CommentItem & { sentAt: number; replyTurn: number } {
+  return c.sentAt !== null && c.resolvedAt === null && c.replyTurn !== null;
+}
+
+export interface CommentCounts {
+  unsent: number;
+  /** 전송됨 (해결됨 포함) */
+  sent: number;
+  /** `hasReply` */
+  replies: number;
+}
+
+/** header·popover가 쓰는 수를 한 번에 센다 */
+export function commentCounts(comments: CommentItem[]): CommentCounts {
+  const counts = { unsent: 0, sent: 0, replies: 0 };
+  for (const c of comments) {
+    if (c.sentAt === null) counts.unsent++;
+    else counts.sent++;
+    if (hasReply(c)) counts.replies++;
+  }
+  return counts;
 }
 
 /** header 버튼 글: `💬 미전송 a · 응답 b`. 0인 쪽은 뺀다 */
-export function headerLabel(comments: CommentItem[]): string {
+export function headerLabel({ unsent, replies }: CommentCounts): string {
   const parts: string[] = [];
-  const unsent = comments.filter((c) => c.sentAt === null).length;
-  const replies = replyCount(comments);
   if (unsent > 0) parts.push(`미전송 ${unsent}`);
   if (replies > 0) parts.push(`응답 ${replies}`);
   return parts.length === 0 ? '💬' : `💬 ${parts.join(' · ')}`;
@@ -144,7 +161,7 @@ export interface ReplyTarget {
  * (목록에 없는 세션을 고르면 `pickSession`이 첫 세션으로 바꿔 버려 이동이 되지 않는다)
  */
 export function replyTarget(c: CommentItem, sessions: SessionSummary[]): ReplyTarget | null {
-  if (c.replyTurn === null || c.resolvedAt !== null) return null;
+  if (!hasReply(c)) return null;
   const session = sessions.find((s) => s.id === c.sentTo);
   if (!session) return null;
   const latest = session.turn === c.replyTurn;
@@ -154,7 +171,7 @@ export function replyTarget(c: CommentItem, sessions: SessionSummary[]): ReplyTa
 
 /** 목록 row의 짧은 표시 `응답 #n` */
 export function replyLabel(c: CommentItem): string | null {
-  return c.replyTurn === null ? null : `응답 #${c.replyTurn}`;
+  return hasReply(c) ? `응답 #${c.replyTurn}` : null;
 }
 
 // SQLite의 ORDER BY path는 byte 순서라 localeCompare를 쓰지 않는다

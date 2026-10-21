@@ -4,14 +4,15 @@ import type { CommentItem, SessionSummary, View } from '../api';
 import {
   anchorOf,
   byPath,
+  commentCounts,
   copyUnsent,
   firstLine,
+  hasReply,
   headerLabel,
   nextDraft,
   openComments,
   placeComments,
   placeDraft,
-  replyCount,
   replyLabel,
   replyTarget,
   sortForList,
@@ -281,7 +282,7 @@ describe('sortForList 3단', () => {
   });
 });
 
-describe('openComments / replyCount / headerLabel', () => {
+describe('openComments / commentCounts / headerLabel', () => {
   const unsent = commentFixture({ id: 1 });
   const sentNoReply = commentFixture({ id: 2, sentAt: 5, sentTo: 's1', sentTurn: 1 });
   const sentReply = commentFixture({ id: 3, sentAt: 5, sentTo: 's1', sentTurn: 1, replyTurn: 1 });
@@ -292,15 +293,29 @@ describe('openComments / replyCount / headerLabel', () => {
     expect(openComments([unsent, sentNoReply, sentReply, resolvedReply]).map((c) => c.id)).toEqual([1, 2, 3]);
   });
 
-  it('replyCount는 전송됨·미해결·응답 있는 것만 센다', () => {
-    expect(replyCount([unsent, sentNoReply, sentReply, resolvedReply, unsentWithReply])).toBe(1);
+  it('hasReply는 전송됨·미해결·응답 있는 것만', () => {
+    expect([unsent, sentNoReply, sentReply, resolvedReply, unsentWithReply].map(hasReply)).toEqual([
+      false,
+      false,
+      true,
+      false,
+      false,
+    ]);
+  });
+
+  it('commentCounts: 미전송 / 전송됨(해결됨 포함) / 응답', () => {
+    expect(commentCounts([unsent, sentNoReply, sentReply, resolvedReply, unsentWithReply])).toEqual({
+      unsent: 2,
+      sent: 3,
+      replies: 1,
+    });
   });
 
   it('headerLabel: 💬 / 미전송 a / 응답 b / 둘 다', () => {
-    expect(headerLabel([])).toBe('💬');
-    expect(headerLabel([unsent, unsent])).toBe('💬 미전송 2');
-    expect(headerLabel([sentReply, sentReply, sentReply])).toBe('💬 응답 3');
-    expect(headerLabel([unsent, unsent, sentReply, sentReply, sentReply])).toBe('💬 미전송 2 · 응답 3');
+    expect(headerLabel(commentCounts([]))).toBe('💬');
+    expect(headerLabel(commentCounts([unsent, unsent]))).toBe('💬 미전송 2');
+    expect(headerLabel(commentCounts([sentReply, sentReply, sentReply]))).toBe('💬 응답 3');
+    expect(headerLabel(commentCounts([unsent, unsent, sentReply, sentReply, sentReply]))).toBe('💬 미전송 2 · 응답 3');
   });
 });
 
@@ -346,8 +361,9 @@ describe('replyTarget / replyLabel', () => {
     });
   });
 
-  it('replyLabel은 목록용 짧은 글', () => {
+  it('replyLabel은 목록용 짧은 글. 해결됨이면 없다', () => {
     expect(replyLabel(sent({ replyTurn: 3 }))).toBe('응답 #3');
     expect(replyLabel(sent({}))).toBeNull();
+    expect(replyLabel(sent({ replyTurn: 3, resolvedAt: 9 }))).toBeNull();
   });
 });

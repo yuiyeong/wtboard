@@ -11,6 +11,7 @@ import {
 } from '../api';
 import { scrollToFile } from '../lib/anchor';
 import { byPath, openComments, replyTarget, unsentByPath, type ReplyTarget } from '../lib/comments';
+import type { CommentActions } from './CommentWidget';
 import { worktreeLabel } from '../lib/selection';
 import { effectiveView, filesKey, pickSession } from '../lib/sessions';
 import { buildTree, flattenFiles, splitCollapsed, type TreeNode } from '../lib/tree';
@@ -60,7 +61,8 @@ export function WorktreeView({ repo, worktree, autoAttachComments }: Props) {
   const rememberedSession = useUiStore((s) => s.sessions[worktree.id]);
   const selectSession = useUiStore((s) => s.selectSession);
   const sessions = useQuery({ queryKey: ['sessions', worktree.id], queryFn: () => listSessions(worktree.id) });
-  const session = pickSession(sessions.data ?? [], rememberedSession);
+  const sessionList = sessions.data ?? NO_SESSIONS;
+  const session = pickSession(sessionList, rememberedSession);
   const view = effectiveView(chosenView, session);
   const sessionId = view === 'branch' || !session ? null : session.id;
   const files = useQuery({
@@ -86,10 +88,10 @@ export function WorktreeView({ repo, worktree, autoAttachComments }: Props) {
   // 해결됨 코멘트는 diff에 그리지 않는다 (목록 popover에만)
   const commentsByPath = useMemo(() => byPath(openComments(commentList)), [commentList]);
   const unsentPaths = useMemo(() => unsentByPath(commentList), [commentList]);
-  // mutateAsync는 참조가 안정적이라 FileDiff memo를 깨지 않는다
   const { add, update, remove, resolve, resend } = useCommentActions(worktree.id);
-  const sessionList = sessions.data ?? NO_SESSIONS;
-  const replyTargetOf = useCallback((c: CommentItem) => replyTarget(c, sessionList), [sessionList]);
+  // 응답이 있는 코멘트가 없으면 세션 목록이 바뀌어도 FileDiff memo를 깨지 않는다
+  const sessionsForReply = commentList.some((c) => c.replyTurn !== null) ? sessionList : NO_SESSIONS;
+  const replyTargetOf = useCallback((c: CommentItem) => replyTarget(c, sessionsForReply), [sessionsForReply]);
   // `응답 #n 보기`: 그 세션의 응답 view로 옮기고, 파일 목록이 오면 그 파일로 스크롤한다
   const openReply = useCallback(
     (c: CommentItem, target: ReplyTarget) => {
@@ -98,6 +100,19 @@ export function WorktreeView({ repo, worktree, autoAttachComments }: Props) {
       requestScroll(worktree.id, c.path);
     },
     [worktree.id, selectSession, setView],
+  );
+  // mutateAsync는 참조가 안정적이라 이 객체는 응답 대상·세션이 바뀔 때만 새로 만들어진다
+  const actions = useMemo<CommentActions>(
+    () => ({
+      onAdd: add.mutateAsync,
+      onUpdate: update.mutateAsync,
+      onDelete: remove.mutateAsync,
+      onResolve: resolve.mutateAsync,
+      onResend: resend.mutateAsync,
+      replyTargetOf,
+      onOpenReply: openReply,
+    }),
+    [add.mutateAsync, update.mutateAsync, remove.mutateAsync, resolve.mutateAsync, resend.mutateAsync, replyTargetOf, openReply],
   );
   const pendingScroll = useNavStore((s) => s.pendingScroll);
   useEffect(() => {
@@ -135,7 +150,7 @@ export function WorktreeView({ repo, worktree, autoAttachComments }: Props) {
       <div className="flex items-center gap-3 border-b border-gray-200 px-4 py-1.5 text-sm">
         <ViewTabs
           view={view}
-          sessions={sessions.data ?? []}
+          sessions={sessionList}
           session={session}
           onView={(v) => setView(worktree.id, v)}
           onSession={(id) => selectSession(worktree.id, id)}
@@ -175,13 +190,7 @@ export function WorktreeView({ repo, worktree, autoAttachComments }: Props) {
               viewType={viewType}
               onSetViewed={onSetViewed}
               comments={commentsByPath.get(f.path) ?? NO_COMMENTS}
-              onAdd={add.mutateAsync}
-              onUpdate={update.mutateAsync}
-              onDelete={remove.mutateAsync}
-              onResolve={resolve.mutateAsync}
-              onResend={resend.mutateAsync}
-              replyTargetOf={replyTargetOf}
-              onOpenReply={openReply}
+              actions={actions}
             />
           ))}
         </main>

@@ -1,11 +1,29 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import type { CommentItem } from '../api';
+import type { CommentItem, NewComment } from '../api';
 import { focusedInput, setEdit, startEdit, useDraftStore } from '../drafts';
 import { statusLabel, type ReplyTarget } from '../lib/comments';
 
-/** 성공하면 resolve, 실패하면 오류로 reject한다. 참조가 안정적이어야 FileDiff memo가 유지된다 */
+/** 성공하면 resolve, 실패하면 오류로 reject한다 */
+export type OnAddComment = (comment: NewComment) => Promise<unknown>;
 export type OnUpdateComment = (vars: { id: number; body: string }) => Promise<unknown>;
 export type OnCommentAction = (id: number) => Promise<unknown>;
+
+/** 코멘트에 할 수 있는 일 전부. 하나의 객체로 내려보내며, 참조가 안정적이어야 FileDiff memo가 유지된다 */
+export interface CommentActions {
+  onAdd: OnAddComment;
+  onUpdate: OnUpdateComment;
+  onDelete: OnCommentAction;
+  /** 전송됨 → 해결됨 */
+  onResolve: OnCommentAction;
+  /** 전송됨 → 미전송 (다음 prompt에 다시 붙는다) */
+  onResend: OnCommentAction;
+  /** 전송됨 코멘트의 `응답 #n 보기` 대상. 없으면 버튼을 두지 않는다 */
+  replyTargetOf: (c: CommentItem) => ReplyTarget | null;
+  onOpenReply: (c: CommentItem, target: ReplyTarget) => void;
+}
+
+/** 글자만 있는 작은 action 버튼 */
+export const ACTION = 'hover:underline disabled:opacity-50';
 
 /**
  * 코멘트 입력 (새 코멘트·수정 공용). Cmd+Enter 저장, Esc 취소.
@@ -94,39 +112,17 @@ export function CommentInput({
   );
 }
 
-/** 저장된 코멘트에 필요한 것. 모두 참조가 안정적이어야 FileDiff memo가 유지된다 */
-export interface SavedProps {
-  onUpdate: OnUpdateComment;
-  onDelete: OnCommentAction;
-  /** 전송됨 → 해결됨 */
-  onResolve: OnCommentAction;
-  /** 전송됨 → 미전송 (다음 prompt에 다시 붙는다) */
-  onResend: OnCommentAction;
-  /** 전송됨 코멘트의 `응답 #n 보기` 대상. 없으면 버튼을 두지 않는다 */
-  replyTargetOf: (c: CommentItem) => ReplyTarget | null;
-  onOpenReply: (c: CommentItem, target: ReplyTarget) => void;
-}
-
-const ACTION = 'hover:underline disabled:opacity-50';
-
 /**
  * 저장된 코멘트 하나. 미전송은 파란 테두리에 `수정`, 전송됨은 회색에 `다시 보내기`·`해결됨`과 응답 버튼.
  * 해결됨은 diff에 오지 않는다 (`openComments`가 거른다)
  */
-export function SavedComment({
-  comment,
-  onUpdate,
-  onDelete,
-  onResolve,
-  onResend,
-  replyTargetOf,
-  onOpenReply,
-}: SavedProps & { comment: CommentItem }) {
+export function SavedComment({ comment, actions }: { comment: CommentItem; actions: CommentActions }) {
+  const { onUpdate, onDelete, onResolve, onResend, replyTargetOf, onOpenReply } = actions;
   const editing = useDraftStore((s) => s.edits[comment.id]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const unsent = comment.sentAt === null;
-  const reply = unsent ? null : replyTargetOf(comment);
+  const reply = replyTargetOf(comment);
 
   if (editing !== undefined) {
     return (
@@ -194,6 +190,6 @@ export function SavedComment({
 }
 
 /** 한 줄 아래에 보이는 코멘트들 */
-export function CommentThread({ comments, ...props }: SavedProps & { comments: CommentItem[] }) {
-  return comments.map((c) => <SavedComment key={c.id} comment={c} {...props} />);
+export function CommentThread({ comments, actions }: { comments: CommentItem[]; actions: CommentActions }) {
+  return comments.map((c) => <SavedComment key={c.id} comment={c} actions={actions} />);
 }
