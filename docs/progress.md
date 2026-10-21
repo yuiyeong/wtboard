@@ -11,7 +11,8 @@
 | 3. 봤음 체크 + 다시 바뀜 표시 | 완료 (2026-10-19) | `plans/2026-10-19-stage3-viewed.md` (spec: `specs/2026-10-19-stage3-viewed-design.md`) |
 | 4. plugin(hooks) + 이번 세션 / 마지막 응답 탭 | 완료 (2026-10-19) | `plans/2026-10-19-stage4-sessions.md` (spec: `specs/2026-10-19-stage4-sessions-design.md`) |
 | 5. 리뷰 코멘트 자동 첨부 + 메뉴바 | 완료 (2026-10-19) | `plans/2026-10-19-stage5-review-comments.md` (spec: `specs/2026-10-19-stage5-review-comments-design.md`) |
-| 6. 미정 | 아직 없음 | "6단계 후보" 참고 |
+| 6. 전송 뒤 코멘트의 생애: 다시 보내기·응답 연결·해결됨 + 옛 hook binary 경고 | 완료 (2026-10-21) | `plans/2026-10-21-stage6-comment-lifecycle.md` (spec: `specs/2026-10-21-stage6-comment-lifecycle-design.md`) |
+| 7. 미정 | 아직 없음 | "7단계 후보" 참고 |
 
 ## 1단계 결과
 
@@ -170,14 +171,53 @@
 - `PRAGMA journal_mode = WAL`의 결과를 확인하지 않는다. 다른 연결이 DB를 잡고 있어 WAL로 바꾸지 못하면 rollback journal로 조용히 진행한다.
 - 코멘트 `삭제`는 확인 없이 바로 지운다.
 
-## 6단계 후보
+## 6단계 결과
 
-- spec 범위 밖에 둔 것: 여러 줄 범위 코멘트, 파일 단위 코멘트, 답글(thread), Claude의 답을 코멘트에 연결하기("해결됨" 자동 판정), 알림(notification center).
-- 옛 hook binary 감지와 hook binary를 앱 번들에 포함하고 설치를 앱에서 안내.
+- `state.sqlite` schema 2 (`comments.sent_turn`, `comments.resolved_at`). 코멘트 상태가 미전송 → 전송됨 → 해결됨이 되고, `다시 보내기`로 미전송에 되돌린다. hook `prompt-submit`이 `sent_turn`(그 prompt가 연 turn)을 적고, 앱은 `list_comments`마다 그 세션의 event에서 코멘트별 `replyTurn`(`sent_turn` 이후 그 파일을 건드린 가장 큰 turn)을 붙인다. hook `version` subcommand와 앱 시작 때의 옛 binary 경고를 더했다.
+- 새 command: `resolve_comment`, `unresolve_comment`, `resend_comment`. `list_comments`는 `CommentItem`(`Comment` + `replyTurn`).
+- fixture(`WTBOARD_CONFIG`, debug hook `WTBOARD_HOOK_BIN`)에서 실제 `claude -p`(claude 2.1.303)로 확인했다 (2026-10-21).
+  - turn 1: 코멘트 2개(`app/main.py:7`, `app/users.py:2`)를 첨부하고 "1번만 반영"을 시켰다. Claude가 main.py의 `health`를 `get_health`로 바꿨다. DB `sent_turn = 1` 둘 다. 앱: header `💬 응답 1`, main.py 코멘트는 줄이 바뀌어 "위치가 바뀐 코멘트"에 `응답 #1 보기`와 함께, users.py 코멘트는 응답 버튼 없이 `전송됨`.
+  - `응답 #1 보기` → 마지막 응답 #1 탭으로 가서 그 변경만 보였다.
+  - users.py 코멘트 `다시 보내기` → 미전송 → `claude --resume <id> -p` → `sent_turn = 2`, meta turn 2. 응답 뒤 `응답 #2 보기`(마지막 응답 #2 → users.py 변경), main.py의 `응답 #1 보기`는 마지막 turn이 아니라 "이번 세션"으로 갔다. header `💬 응답 2`.
+  - `해결됨`·`되돌리기`·`다시 보내기` widget·popover 동작은 seed한 코멘트로 screenshot 확인했다 (해결됨은 diff에서 사라지고 popover "해결된 코멘트 n개"에만 보인다).
+  - 옛 hook binary 경고: 실제 설치된 `~/.wtboard/bin/wtboard-hook`(5단계 build, schema 1)이 sidebar 경고로 잡혔다.
+  - fixture `.git/index` mtime은 `claude` 2회와 앱 실행 전후로 같았다.
+  - 확인 중 관찰: UI를 HMR로 고치던 중 React tree가 잠시 죽은 사이 온 `worktree-changed`가 유실되어 branch view의 users.py patch가 옛 내용으로 남았다 (`staleTime: Infinity`). 그 파일에 다음 event가 오면 돌아온다. 개발 중 HMR에서만 나는 일이다.
+- hook 속도는 다시 재지 않았다 (첨부 경로에 `meta.json` 읽기 1회가 더해졌다).
+
+## 6단계에서 정한 것 (spec과 다른 점)
+
+- `SCHEMA_VERSION`은 `MIGRATIONS.len()`이다. migration을 더하면 같이 오른다.
+- hook `version` 줄의 format과 parser(`hook_version_line`, `parse_hook_schema`)는 `core::store::db`에 한 쌍으로 둔다 (round-trip test). hook binary 경로 규칙(`hook_binary_path`)은 `core::store::config`에 두고 run.sh와 같은 규칙을 test한다.
+- 앱의 hook 확인은 별도 thread + 2초 timeout(`check_with_timeout`)이다. 멈춘 binary가 registry 열기를 막지 않는다. binary가 없으면(`NotFound`) 경고가 없고, 실행 오류(권한 등)는 경고 뒤에 붙인다.
+- `reply_turns`는 해결됨 코멘트를 건너뛴다 (화면이 응답을 보이지 않는다). `copy`는 `sent_turn`이 없어 저절로 빠진다. `SENT_TO_COPY` 상수는 앱의 복사 경로가 쓴다.
+- `touched_turns`는 `turns_by_rel`로 `session::view::items`와 묶기를 공유한다.
+- UI: 코멘트 action 7개(`onAdd` … `onOpenReply`)를 `CommentActions` 객체 하나로 내려보낸다. 응답이 있는 코멘트가 없으면 세션 목록이 바뀌어도 그 객체를 새로 만들지 않는다 (FileDiff memo 유지).
+- popover 목록(`CommentList`)은 열려 있을 때만 mount된다. 복사·지우기 오류는 닫았다 열면 사라진다 (5단계 한계 하나가 없어졌다).
+- `해결됨`·`되돌리기`는 `['repos']`를 다시 읽지 않는다 (미전송 수가 안 바뀐다).
+- `replyTarget`은 `hasReply`(전송됨·미해결·응답 있음)일 때만 있고, 세션이 이 worktree 목록에 없으면 없다 (`pickSession`이 첫 세션으로 바꿔 버려 이동이 안 된다).
+- 스크롤 예약(`ui/src/nav.ts`)은 slot 하나다. 다른 worktree의 요청은 그 worktree가 선택될 때까지 남는다.
+- **사용자가 할 일: `scripts/install-hook.sh`를 다시 실행한다** (schema 2 hook). 그 전까지 sidebar에 경고가 보이고 자동 첨부가 되지 않는다.
+
+## 6단계 알려진 한계
+
+- 응답 판정은 파일 단위다. 그 turn이 그 파일을 건드렸으면 `응답 #n`이고, 그 줄을 고쳤는지는 기존 위치 맞추기(snippet)가 보여 준다 ("위치가 바뀐 코멘트"면 줄이 바뀐 것). 되돌려진 변경(before == after)도 건드린 것으로 센다.
+- `복사됨` 코멘트는 응답이 없다 (어느 세션에 붙였는지 모른다).
+- 세션 기록이 `keep_days`로 지워지면 `응답 #n`이 사라진다. 코멘트는 남는다.
+- 응답 turn이 마지막 turn이 아니면 `응답 #n 보기`는 "이번 세션"(누적)으로 간다. turn 하나만 보는 화면이 없다.
+- 옛 hook binary 경고는 앱 시작 때 한 번이다. 시작 뒤에 binary를 바꿔도 다시 시작해야 사라진다. 새 hook(schema 2)이 아직 version 1인 DB(새 앱을 한 번도 안 띄움)를 만나면 첨부하지 않는다.
+- `list_comments`마다 전송된 코멘트의 세션 `events.jsonl`을 다시 읽는다 (cache 없음).
+- 해결됨 코멘트에는 widget이 없다 (popover에서만 되돌린다). `다시 보내기`·`해결됨`에 확인이 없다 (삭제와 같다).
+- 세션 목록이 바뀌면(60초 refetch, session event) 응답이 있는 코멘트가 하나라도 있을 때 FileDiff 전부가 다시 그려진다.
+
+## 7단계 후보
+
+- spec 범위 밖에 둔 것: 여러 줄 범위 코멘트, 파일 단위 코멘트, 답글(thread), 줄 단위 응답 판정, 알림(notification center).
+- hook binary를 앱 번들에 포함하고 설치를 앱에서 안내 (감지·경고는 6단계에서 했다).
 - fork 레포의 PR base: `remote_branch`가 `origin`만 본다 (`upstream` remote 미지원).
 - 파일 event마다 sidebar 갱신을 위해 모든 worktree summary를 다시 계산한다 (worktree당 git 2회: branch, fsmonitor). 레포가 많아지면 branch·fsmonitor cache를 검토.
-- 전송됨 코멘트 "다시 보내기"(`sent_at = NULL`로 되돌리기). 첨부 출력이 버려졌거나(timeout, 다른 hook의 block) rewind로 그 prompt를 되돌린 경우를 위해.
 - 4단계 보류 항목(gitlink commit, numstat cache `same: false` race, racy-mtime guard)의 수정. gitlink는 committed diff에 `--ignore-submodules=all`을 주는 방향.
+- 5단계 미확인 항목: 대화형 `claude`에서 `systemMessage`가 보이는지.
 
 ## 미룬 Minor (최종 리뷰)
 
