@@ -208,7 +208,8 @@
 - 옛 hook binary 경고는 앱 시작 때 한 번이다. 시작 뒤에 binary를 바꿔도 다시 시작해야 사라진다. 새 hook(schema 2)이 아직 version 1인 DB(새 앱을 한 번도 안 띄움)를 만나면 첨부하지 않는다.
 - `list_comments`마다 전송된 코멘트의 세션 `events.jsonl`을 다시 읽는다 (cache 없음).
 - 해결됨 코멘트에는 widget이 없다 (popover에서만 되돌린다). `다시 보내기`·`해결됨`에 확인이 없다 (삭제와 같다).
-- 세션 목록이 바뀌면(60초 refetch, session event) 응답이 있는 코멘트가 하나라도 있을 때 FileDiff 전부가 다시 그려진다.
+- 세션 목록의 내용이 바뀌면(session event 등. 60초 refetch는 내용이 같으면 참조가 유지된다) 응답이 있는 코멘트가 하나라도 있을 때 FileDiff 전부가 다시 그려진다.
+- `prompt-submit`에서 첨부(`sent_turn = N`)는 commit됐는데 뒤이은 `write_meta`가 실패하면(disk full 등) meta는 N-1에 머물러 그 turn의 edit event가 N-1로 적히고 `응답 #N`이 잡히지 않는다 (4단계 corrupt meta 한계와 같은 부류).
 
 ## 7단계 후보
 
@@ -238,3 +239,9 @@
 - (4단계) session view: `worktrees_of`와 touched 판정이 경로 == root일 때 다르다. relabel이 mode 줄을 버려 chmod 변경이 보이지 않는다. numstat 실패 분기가 `same_as` short-circuit 때 `uncertain` 없이 목록에 올린다. `active_roots`는 `all_sessions`가 dir만 거르지 않는다.
 - (4단계) UI: `listSessions` 오류가 "세션 없음"으로 보인다. 기억된 session·turn 탭이 있으면 cold start에 branch view가 잠깐 보인다. 첫 prompt 전에 `마지막 응답 #0`이 보인다. 탭·select에 a11y 속성이 없다. persisted `views`/`sessions` map을 지우지 않는다. `setView`/`selectSession`/`useWorktreeEvents`에 test가 없다.
 - (4단계) plugin: `WTBOARD_HOOK_BIN`이 실행 불가일 때의 test가 없다.
+- (6단계) 스크롤 예약 slot(`nav.ts`)이 view·세션을 모르므로, `응답 #n 보기`가 그 파일이 없는 view(되돌려진 변경은 session view 목록에서 빠진다)에 도착하면 요청이 남았다가 나중에 branch view로 돌아올 때 스크롤된다. 요청에 view·session id를 넣어 다르면 버리면 된다.
+- (6단계) `hook::check_with_timeout`이 timeout 때 child process를 죽이지 않는다 (`spawn` + `try_wait` + `kill`로 바꾸면 된다).
+- (6단계) 옛 hook 경고 문구가 앱보다 새 hook(schema 3)에도 "옛 version"으로 나온다. 찾은 schema 번호를 문구에 넣으면 낫다.
+- (6단계) header `💬 미전송 a · 응답 b` 버튼에 spec 6절의 `title`(풀어 쓴 설명)이 없다.
+- (6단계) popover row가 `<button>`에서 `<li onClick>`으로 바뀌어 키보드로 "파일로 가기"를 못 한다 (`role="button"` + Enter/Space).
+- (6단계) `list_comments`마다 세션별 `events.jsonl`을 다시 읽는다. (session id, mtime·len) key cache를 `SessionViewCache`처럼 두면 된다.
