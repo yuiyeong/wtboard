@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::SystemTime;
 
-use super::list::{target_turn, touched, with_root, Touch};
+use super::list::{target_turn, touched, turns_by_rel, with_root, Touch};
 use super::{Baseline, BaselineKind, SessionDir, Snapshot, TurnIndex};
 use crate::domain::{ChangedFile, FilePatch, FileStatus, PatchBody, MAX_DIFF_BYTES};
 use crate::git::attrs::linguist_generated;
@@ -297,10 +297,7 @@ fn items(
             targets.entry(t.rel.as_str()).or_insert(t);
         }
     }
-    let mut turns_of: HashMap<&str, BTreeSet<u32>> = HashMap::new();
-    for t in &touches {
-        turns_of.entry(t.rel.as_str()).or_default().insert(t.turn);
-    }
+    let turns_of = turns_by_rel(&touches);
     let mut cx = Context { dir, root, turns_of, baselines: dir.baselines(), turns: HashMap::new(), cache };
     targets
         .into_iter()

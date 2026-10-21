@@ -7,7 +7,7 @@ use rusqlite::{Connection, TransactionBehavior};
 
 use crate::session::list::touched_turns;
 use crate::session::SessionDir;
-use crate::store::comments::{unsent_in, Comment, Side, SENT_TO_COPY};
+use crate::store::comments::{unsent_in, Comment, Side};
 use crate::store::StoreError;
 
 /// 첨부 텍스트 길이 상한 (글자 수, byte 아님)
@@ -97,7 +97,7 @@ pub fn attach(
 }
 
 /// 코멘트별 "응답 turn": `sent_to` 세션의 Edit·Bash event 중 `turn >= sent_turn`이고 이 worktree의 그 path를
-/// 건드린 가장 큰 turn. 복사로 보낸 것, `sent_turn`이 없는 것, 세션 폴더가 없거나 id가 잘못된 것은 빠진다.
+/// 건드린 가장 큰 turn. `sent_turn`이 없는 것(복사로 보낸 것 포함), 세션 폴더가 없거나 id가 잘못된 것은 빠진다.
 /// 세션마다 event를 한 번만 읽는다
 pub fn reply_turns(
     data_dir: &Path,
@@ -105,20 +105,17 @@ pub fn reply_turns(
     all_roots: &[PathBuf],
     comments: &[Comment],
 ) -> HashMap<i64, u32> {
-    let mut by_session: HashMap<&str, Vec<&Comment>> = HashMap::new();
+    let mut by_session: HashMap<&str, Vec<(&Comment, u32)>> = HashMap::new();
     for c in comments {
-        if let (Some(session), Some(_)) = (c.sent_to.as_deref(), c.sent_turn) {
-            if session != SENT_TO_COPY {
-                by_session.entry(session).or_default().push(c);
-            }
+        if let (Some(session), Some(turn)) = (c.sent_to.as_deref(), c.sent_turn) {
+            by_session.entry(session).or_default().push((c, turn));
         }
     }
     let mut out = HashMap::new();
     for (session, comments) in by_session {
         let Some(dir) = SessionDir::open(data_dir, session) else { continue };
         let turns = touched_turns(&dir, worktree_root, all_roots);
-        for c in comments {
-            let Some(sent_turn) = c.sent_turn else { continue };
+        for (c, sent_turn) in comments {
             if let Some(turn) = turns.get(&c.path).and_then(|t| t.range(sent_turn..).next_back()) {
                 out.insert(c.id, *turn);
             }
