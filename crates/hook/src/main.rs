@@ -18,7 +18,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use wtboard_core::session::SessionDir;
-use wtboard_core::store::db::SCHEMA_VERSION;
+use wtboard_core::store::db::hook_version_line;
 use wtboard_core::store::data_dir;
 
 type HookResult = Result<(), Box<dyn Error>>;
@@ -67,7 +67,7 @@ fn main() {
 
 fn run(sub: &str) -> HookResult {
     if sub == "version" {
-        writeln!(io::stdout(), "wtboard-hook {} schema {}", env!("CARGO_PKG_VERSION"), SCHEMA_VERSION)?;
+        writeln!(io::stdout(), "{}", hook_version_line(env!("CARGO_PKG_VERSION")))?;
         return Ok(());
     }
     let handler: Handler = match sub {

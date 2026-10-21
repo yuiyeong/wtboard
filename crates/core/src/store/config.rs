@@ -106,6 +106,16 @@ pub fn config_path(env: Option<OsString>, home: &Path) -> PathBuf {
         .unwrap_or_else(|| home.join(".wtboard/config.toml"))
 }
 
+/// Claude Code plugin(`run.sh`)이 실행하는 hook binary. `WTBOARD_HOOK_BIN`이 비어 있지 않으면 그것,
+/// 없으면 `~/.wtboard/bin/wtboard-hook` (`scripts/install-hook.sh`가 설치하는 곳)
+pub fn hook_binary_path(env: Option<OsString>, home: &Path) -> PathBuf {
+    env.filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".wtboard/bin/wtboard-hook"))
+}
+
+pub fn hook_binary() -> PathBuf {
+    hook_binary_path(std::env::var_os("WTBOARD_HOOK_BIN"), &home_dir())
+}
+
 pub fn expand_tilde(p: &str, home: &Path) -> PathBuf {
     if p == "~" {
         home.to_path_buf()

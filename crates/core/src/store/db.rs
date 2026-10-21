@@ -49,6 +49,18 @@ const MIGRATIONS: &[&str] = &[MIGRATE_V1, MIGRATE_V2];
 /// `state.sqlite` schema version (`PRAGMA user_version`). migration을 더하면 같이 오른다
 pub const SCHEMA_VERSION: i32 = MIGRATIONS.len() as i32;
 
+/// hook `version` subcommand가 stdout에 쓰는 한 줄. 앱은 `parse_hook_schema`로 읽어 옛 binary를 가른다
+pub fn hook_version_line(pkg_version: &str) -> String {
+    format!("wtboard-hook {pkg_version} schema {SCHEMA_VERSION}")
+}
+
+/// `hook_version_line` 출력의 schema 번호. 옛 binary는 `version`을 몰라 stdout이 비므로 `None`
+pub fn parse_hook_schema(stdout: &str) -> Option<i32> {
+    let mut words = stdout.split_whitespace();
+    words.find(|w| *w == "schema")?;
+    words.next()?.parse().ok()
+}
+
 /// 앱이 `state.sqlite`를 연다. 부모 폴더와 파일을 만들고, WAL로 바꾸고, schema를 최신으로 올린다.
 /// 이 앱보다 새 version이면 `NewerSchema`
 pub fn open_state(path: &Path) -> Result<Connection, StoreError> {

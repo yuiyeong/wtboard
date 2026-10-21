@@ -16,7 +16,7 @@ use wtboard_core::session::list::{active_roots, cleanup, sessions_for, worktrees
 use wtboard_core::session::view::{self, SessionView, SessionViewCache};
 use wtboard_core::session::{sessions_dir, SessionDir};
 use wtboard_core::store::comments::CommentStore;
-use wtboard_core::store::config::Config;
+use wtboard_core::store::config::{hook_binary, Config};
 use wtboard_core::store::data_dir;
 use wtboard_core::store::settings::SettingsStore;
 use wtboard_core::store::viewed::ViewedStore;
@@ -262,8 +262,8 @@ fn open_registry(handle: &AppHandle) -> Result<Registry, String> {
         reg.warn(w);
     }
     // 옛 hook binary는 schema가 올라간 DB를 열지 못해 첨부가 조용히 멈춘다
-    let bin = hook::hook_binary();
-    if let Some(message) = hook::check(&bin) {
+    let bin = hook_binary();
+    if let Some(message) = hook::check_with_timeout(bin.clone(), hook::CHECK_TIMEOUT) {
         reg.warn(EntryError { path: bin.display().to_string(), message });
     }
     let sessions = sessions_dir(&data);

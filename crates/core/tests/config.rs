@@ -69,3 +69,14 @@ fn review_auto_attach_default_true() {
     assert!(!off.review.auto_attach_comments);
     assert!(Config::parse("[review]\n").unwrap().review.auto_attach_comments);
 }
+
+#[test]
+fn hook_binary_path_follows_run_sh_rule() {
+    use std::ffi::OsString;
+    use std::path::{Path, PathBuf};
+    use wtboard_core::store::config::hook_binary_path;
+    let home = Path::new("/Users/me");
+    assert_eq!(hook_binary_path(None, home), PathBuf::from("/Users/me/.wtboard/bin/wtboard-hook"));
+    assert_eq!(hook_binary_path(Some(OsString::from("")), home), PathBuf::from("/Users/me/.wtboard/bin/wtboard-hook"));
+    assert_eq!(hook_binary_path(Some(OsString::from("/tmp/h")), home), PathBuf::from("/tmp/h"));
+}

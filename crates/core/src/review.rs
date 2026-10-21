@@ -97,8 +97,8 @@ pub fn attach(
 }
 
 /// 코멘트별 "응답 turn": `sent_to` 세션의 Edit·Bash event 중 `turn >= sent_turn`이고 이 worktree의 그 path를
-/// 건드린 가장 큰 turn. `sent_turn`이 없는 것(복사로 보낸 것 포함), 세션 폴더가 없거나 id가 잘못된 것은 빠진다.
-/// 세션마다 event를 한 번만 읽는다
+/// 건드린 가장 큰 turn. `sent_turn`이 없는 것(복사로 보낸 것 포함), 해결됨(화면이 응답을 보이지 않는다),
+/// 세션 폴더가 없거나 id가 잘못된 것은 빠진다. 세션마다 event를 한 번만 읽는다
 pub fn reply_turns(
     data_dir: &Path,
     worktree_root: &Path,
@@ -106,7 +106,7 @@ pub fn reply_turns(
     comments: &[Comment],
 ) -> HashMap<i64, u32> {
     let mut by_session: HashMap<&str, Vec<(&Comment, u32)>> = HashMap::new();
-    for c in comments {
+    for c in comments.iter().filter(|c| c.resolved_at.is_none()) {
         if let (Some(session), Some(turn)) = (c.sent_to.as_deref(), c.sent_turn) {
             by_session.entry(session).or_default().push((c, turn));
         }

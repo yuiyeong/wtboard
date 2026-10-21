@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use rusqlite::Connection;
 use wtboard_core::store::comments::CommentStore;
-use wtboard_core::store::db::{open_existing, open_state, SCHEMA_VERSION};
+use wtboard_core::store::db::{hook_version_line, open_existing, open_state, parse_hook_schema, SCHEMA_VERSION};
 use wtboard_core::store::viewed::ViewedStore;
 use wtboard_core::store::StoreError;
 
@@ -153,4 +153,15 @@ fn reopening_wal_file_needs_no_write_lock() {
     let existing = open_existing(&path, Duration::from_millis(200)).unwrap();
     assert!(existing.is_some());
     first.execute_batch("COMMIT").unwrap();
+}
+
+/// hook이 `version`에 찍는 줄과 앱이 그것을 읽는 parser는 한 쌍이다
+#[test]
+fn hook_version_line_round_trips() {
+    let line = hook_version_line("0.1.0");
+    assert_eq!(line, "wtboard-hook 0.1.0 schema 2");
+    assert_eq!(parse_hook_schema(&format!("{line}\n")), Some(SCHEMA_VERSION));
+    assert_eq!(parse_hook_schema(""), None);
+    assert_eq!(parse_hook_schema("schema x"), None);
+    assert_eq!(parse_hook_schema("wtboard-hook prompt-submit: 모르는 subcommand"), None);
 }

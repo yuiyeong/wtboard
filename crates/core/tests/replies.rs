@@ -106,12 +106,16 @@ fn reply_turn_is_latest_turn_at_or_after_sent_turn() {
 #[test]
 fn reply_turns_missing_or_invalid_session_is_none() {
     let fx = setup();
+    let mut resolved = sent(6, "src/a.py", Some("s1"), Some(1));
+    resolved.resolved_at = Some(900);
     let comments = [
         sent(1, "src/a.py", Some("copy"), None),
         sent(2, "src/a.py", None, None),
         sent(3, "src/a.py", Some("s-none"), Some(1)),
         sent(4, "src/a.py", Some("../x"), Some(1)),
         sent(5, "src/a.py", Some("s1"), None),
+        // 해결됨은 화면이 응답을 보이지 않으므로 계산하지 않는다
+        resolved,
     ];
     assert!(fx.replies(&comments, &fx.roots()).is_empty());
 }

@@ -44,9 +44,6 @@ fn items(store: &CommentStore, worktree_id: &str, data: &Path, roots: &[PathBuf]
         .collect())
 }
 
-fn resolve(store: &CommentStore, id: i64) -> Result<Comment, String> {
-    store.resolve(id, now_ms()).map_err(msg)
-}
 
 /// `view`는 화면의 view 이름만 받는다 (session id는 코멘트에 필요 없다)
 fn add(store: &CommentStore, new: NewComment) -> Result<Comment, String> {
@@ -88,7 +85,7 @@ pub async fn list_comments(app: AppHandle, worktree_id: String) -> Result<Vec<Co
 
 #[tauri::command]
 pub async fn resolve_comment(app: AppHandle, id: i64) -> Result<Comment, String> {
-    with_store(app, move |s| resolve(s, id)).await
+    with_store(app, move |s| s.resolve(id, now_ms()).map_err(msg)).await
 }
 
 #[tauri::command]
@@ -197,7 +194,8 @@ mod tests {
     fn resolve_unsent_error_text() {
         let store = CommentStore::in_memory();
         let c = add(&store, new("branch", "x")).unwrap();
-        assert_eq!(resolve(&store, c.id).unwrap_err(), "아직 전송되지 않은 코멘트는 해결됨으로 바꿀 수 없습니다");
+        let err = store.resolve(c.id, 1).map_err(msg).unwrap_err();
+        assert_eq!(err, "아직 전송되지 않은 코멘트는 해결됨으로 바꿀 수 없습니다");
     }
 
     #[test]
