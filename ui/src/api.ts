@@ -137,6 +137,15 @@ export interface Comment {
   sentAt: number | null;
   /** 전송 대상. session id 또는 `copy` */
   sentTo: string | null;
+  /** 첨부한 prompt가 연 turn. `copy`로 보냈으면 null */
+  sentTurn: number | null;
+  /** Unix ms. null이면 해결되지 않음. 전송된 코멘트만 해결될 수 있다 */
+  resolvedAt: number | null;
+}
+
+/** 목록에 주는 코멘트: 저장된 값 + 그 코멘트를 받은 세션의 응답 turn (`sentTurn` 이후 그 파일을 건드린 가장 큰 turn) */
+export interface CommentItem extends Comment {
+  replyTurn: number | null;
 }
 
 export type NewComment = Pick<Comment, 'path' | 'side' | 'line' | 'view' | 'snippet' | 'body'>;
@@ -146,7 +155,7 @@ export interface CopiedComments {
   ids: number[];
 }
 
-export const listComments = (worktreeId: string) => invoke<Comment[]>('list_comments', { worktreeId });
+export const listComments = (worktreeId: string) => invoke<CommentItem[]>('list_comments', { worktreeId });
 
 export const addComment = (worktreeId: string, comment: NewComment) =>
   invoke<Comment>('add_comment', { worktreeId, ...comment });
@@ -162,3 +171,11 @@ export const clearSentComments = (worktreeId: string) => invoke<number>('clear_s
 export const copyComments = (worktreeId: string) => invoke<CopiedComments>('copy_comments', { worktreeId });
 
 export const markCommentsSent = (ids: number[]) => invoke<number>('mark_comments_sent', { ids });
+
+/** 전송된 코멘트를 해결됨으로. 미전송이면 오류 */
+export const resolveComment = (id: number) => invoke<Comment>('resolve_comment', { id });
+
+export const unresolveComment = (id: number) => invoke<Comment>('unresolve_comment', { id });
+
+/** 전송된 코멘트를 미전송으로 되돌린다 (다음 prompt에 다시 붙는다) */
+export const resendComment = (id: number) => invoke<Comment>('resend_comment', { id });

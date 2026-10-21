@@ -1,5 +1,5 @@
 import { getChangeKey, type ChangeData } from 'react-diff-view';
-import type { Comment, CopiedComments, Side, View } from '../api';
+import type { Comment, CommentItem, CopiedComments, SessionSummary, Side, View } from '../api';
 import { formatHHMM } from './time';
 
 export const commentsKey = (worktreeId: string) => ['comments', worktreeId] as const;
@@ -100,10 +100,11 @@ export function nextDraft(current: Draft | undefined, anchor: Anchor, view: View
   return { anchor, body: '', view };
 }
 
-/** 목록 순서: 미전송 먼저 → path → line → id. 서버(`list_comments`)와 같다 */
-export function sortForList(comments: Comment[]): Comment[] {
+/** 목록 순서: 미전송 → 전송됨 → 해결됨, 그 안에서 path → line → id. 서버(`list_comments`)와 같다 */
+export function sortForList<T extends Comment>(comments: T[]): T[] {
   return [...comments].sort(
     (a, b) =>
+      Number(a.resolvedAt !== null) - Number(b.resolvedAt !== null) ||
       Number(a.sentAt !== null) - Number(b.sentAt !== null) ||
       compare(a.path, b.path) ||
       a.line - b.line ||
@@ -111,11 +112,58 @@ export function sortForList(comments: Comment[]): Comment[] {
   );
 }
 
+/** diff에 그리는 코멘트: 해결됨은 뺀다 (목록 popover의 해결됨 묶음에만 보인다) */
+export function openComments(comments: CommentItem[]): CommentItem[] {
+  return comments.filter((c) => c.resolvedAt === null);
+}
+
+/** 전송됨(해결 안 됨) 중 응답이 있는 수 */
+export function replyCount(comments: CommentItem[]): number {
+  return comments.filter((c) => c.sentAt !== null && c.resolvedAt === null && c.replyTurn !== null).length;
+}
+
+/** header 버튼 글: `💬 미전송 a · 응답 b`. 0인 쪽은 뺀다 */
+export function headerLabel(comments: CommentItem[]): string {
+  const parts: string[] = [];
+  const unsent = comments.filter((c) => c.sentAt === null).length;
+  const replies = replyCount(comments);
+  if (unsent > 0) parts.push(`미전송 ${unsent}`);
+  if (replies > 0) parts.push(`응답 ${replies}`);
+  return parts.length === 0 ? '💬' : `💬 ${parts.join(' · ')}`;
+}
+
+/** `응답 #n 보기`가 여는 곳 */
+export interface ReplyTarget {
+  sessionId: string;
+  /** 응답 turn이 그 세션의 마지막 turn이면 `turn`(마지막 응답), 아니면 `session`(이번 세션. turn 하나만 보는 화면이 없다) */
+  view: 'session' | 'turn';
+  label: string;
+}
+
+/**
+ * 전송됨 코멘트의 응답으로 가는 버튼. 응답이 없거나 해결됨이거나, 그 세션이 이 worktree의 세션 목록에 없으면 null
+ * (목록에 없는 세션을 고르면 `pickSession`이 첫 세션으로 바꿔 버려 이동이 되지 않는다)
+ */
+export function replyTarget(c: CommentItem, sessions: SessionSummary[]): ReplyTarget | null {
+  if (c.replyTurn === null || c.resolvedAt !== null) return null;
+  const session = sessions.find((s) => s.id === c.sentTo);
+  if (!session) return null;
+  const latest = session.turn === c.replyTurn;
+  const progress = latest && session.turnOpen ? ' 진행 중' : '';
+  return { sessionId: session.id, view: latest ? 'turn' : 'session', label: `응답 #${c.replyTurn}${progress} 보기` };
+}
+
+/** 목록 row의 짧은 표시 `응답 #n` */
+export function replyLabel(c: CommentItem): string | null {
+  return c.replyTurn === null ? null : `응답 #${c.replyTurn}`;
+}
+
 // SQLite의 ORDER BY path는 byte 순서라 localeCompare를 쓰지 않는다
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-/** `미전송` / `전송됨 · 14:05` / `복사됨 · 14:05` (복사는 `sentTo`가 `copy`) */
+/** `미전송` / `전송됨 · 14:05` / `복사됨 · 14:05` (복사는 `sentTo`가 `copy`) / `해결됨 · 14:05` */
 export function statusLabel(c: Comment, fmtTime: (ms: number) => string = formatHHMM): string {
+  if (c.resolvedAt !== null) return `해결됨 · ${fmtTime(c.resolvedAt)}`;
   if (c.sentAt === null) return '미전송';
   return `${c.sentTo === 'copy' ? '복사됨' : '전송됨'} · ${fmtTime(c.sentAt)}`;
 }

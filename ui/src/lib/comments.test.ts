@@ -1,14 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { getChangeKey, parseDiff, type ChangeData } from 'react-diff-view';
-import type { View } from '../api';
+import type { CommentItem, SessionSummary, View } from '../api';
 import {
   anchorOf,
   byPath,
   copyUnsent,
   firstLine,
+  headerLabel,
   nextDraft,
+  openComments,
   placeComments,
   placeDraft,
+  replyCount,
+  replyLabel,
+  replyTarget,
   sortForList,
   statusLabel,
   unsentByPath,
@@ -253,5 +258,96 @@ describe('copyUnsent (마크다운으로 복사)', () => {
 
   it('그 사이 hook이 보내서 미전송이 없으면 clipboard를 비우지 않고 아무것도 표시하지 않는다', async () => {
     expect(await run([])).toEqual({ n: 0, calls: [] });
+  });
+});
+
+describe('statusLabel 해결됨', () => {
+  it('해결됨 · 시각 (resolvedAt)', () => {
+    const fmt = (ms: number) => `t${ms}`;
+    expect(statusLabel(commentFixture({ sentAt: 7, sentTo: 's1', resolvedAt: 9 }), fmt)).toBe('해결됨 · t9');
+  });
+});
+
+describe('sortForList 3단', () => {
+  it('미전송 → 전송됨 → 해결됨, 그 안에서 path → line → id', () => {
+    const list = [
+      commentFixture({ id: 1, path: 'a.ts', line: 1, sentAt: 5, resolvedAt: 6 }),
+      commentFixture({ id: 2, path: 'b.ts', line: 1, sentAt: 5 }),
+      commentFixture({ id: 3, path: 'a.ts', line: 9 }),
+      commentFixture({ id: 4, path: 'b.ts', line: 3 }),
+      commentFixture({ id: 5, path: 'a.ts', line: 2, sentAt: 5 }),
+    ];
+    expect(sortForList(list).map((c) => c.id)).toEqual([3, 4, 5, 2, 1]);
+  });
+});
+
+describe('openComments / replyCount / headerLabel', () => {
+  const unsent = commentFixture({ id: 1 });
+  const sentNoReply = commentFixture({ id: 2, sentAt: 5, sentTo: 's1', sentTurn: 1 });
+  const sentReply = commentFixture({ id: 3, sentAt: 5, sentTo: 's1', sentTurn: 1, replyTurn: 1 });
+  const resolvedReply = commentFixture({ id: 4, sentAt: 5, sentTo: 's1', sentTurn: 1, replyTurn: 1, resolvedAt: 9 });
+  const unsentWithReply = commentFixture({ id: 5, replyTurn: 2 });
+
+  it('openComments는 해결됨만 뺀다', () => {
+    expect(openComments([unsent, sentNoReply, sentReply, resolvedReply]).map((c) => c.id)).toEqual([1, 2, 3]);
+  });
+
+  it('replyCount는 전송됨·미해결·응답 있는 것만 센다', () => {
+    expect(replyCount([unsent, sentNoReply, sentReply, resolvedReply, unsentWithReply])).toBe(1);
+  });
+
+  it('headerLabel: 💬 / 미전송 a / 응답 b / 둘 다', () => {
+    expect(headerLabel([])).toBe('💬');
+    expect(headerLabel([unsent, unsent])).toBe('💬 미전송 2');
+    expect(headerLabel([sentReply, sentReply, sentReply])).toBe('💬 응답 3');
+    expect(headerLabel([unsent, unsent, sentReply, sentReply, sentReply])).toBe('💬 미전송 2 · 응답 3');
+  });
+});
+
+describe('replyTarget / replyLabel', () => {
+  const s = (id: string, turn: number, turnOpen = false): SessionSummary => ({
+    id,
+    startedAt: 0,
+    lastEventAt: 0,
+    active: false,
+    turn,
+    turnOpen,
+    touchedFiles: 0,
+  });
+  const sent = (over: Partial<CommentItem>) => commentFixture({ sentAt: 5, sentTo: 's1', sentTurn: 1, ...over });
+
+  it('응답이 없거나, 해결됨이거나, 세션이 목록에 없으면 null (버튼을 두지 않는다)', () => {
+    expect(replyTarget(sent({}), [s('s1', 3)])).toBeNull();
+    expect(replyTarget(sent({ replyTurn: 3, resolvedAt: 9 }), [s('s1', 3)])).toBeNull();
+    expect(replyTarget(sent({ replyTurn: 3 }), [s('other', 3)])).toBeNull();
+  });
+
+  it('응답 turn이 세션의 마지막 turn이면 마지막 응답(turn) view', () => {
+    expect(replyTarget(sent({ replyTurn: 3 }), [s('s1', 3)])).toEqual({
+      sessionId: 's1',
+      view: 'turn',
+      label: '응답 #3 보기',
+    });
+  });
+
+  it('그 turn이 진행 중이면 문구에 진행 중', () => {
+    expect(replyTarget(sent({ replyTurn: 3 }), [s('s1', 3, true)])).toEqual({
+      sessionId: 's1',
+      view: 'turn',
+      label: '응답 #3 진행 중 보기',
+    });
+  });
+
+  it('마지막 turn이 아니면 이번 세션(session) view (turn 하나만 보는 화면이 없다)', () => {
+    expect(replyTarget(sent({ replyTurn: 2 }), [s('s1', 3)])).toEqual({
+      sessionId: 's1',
+      view: 'session',
+      label: '응답 #2 보기',
+    });
+  });
+
+  it('replyLabel은 목록용 짧은 글', () => {
+    expect(replyLabel(sent({ replyTurn: 3 }))).toBe('응답 #3');
+    expect(replyLabel(sent({}))).toBeNull();
   });
 });

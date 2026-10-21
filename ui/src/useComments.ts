@@ -7,6 +7,9 @@ import {
   deleteComment,
   listComments,
   markCommentsSent,
+  resendComment,
+  resolveComment,
+  unresolveComment,
   updateComment,
   type NewComment,
 } from './api';
@@ -38,7 +41,7 @@ export function useComments(worktreeId: string) {
 }
 
 /**
- * 코멘트 mutation들. 성공하면 코멘트 목록과 `['repos']`(미전송 수)를 다시 읽는다.
+ * 코멘트 mutation들 (추가·수정·삭제·해결됨·되돌리기·다시 보내기·전송됨 지우기·복사). 성공하면 코멘트 목록과 `['repos']`(미전송 수)를 다시 읽는다.
  * `copy`는 `copyUnsent`: 복사한 코멘트 수를 돌려준다 (미전송이 없으면 0)
  */
 export function useCommentActions(worktreeId: string) {
@@ -53,6 +56,9 @@ export function useCommentActions(worktreeId: string) {
     onSuccess,
   });
   const remove = useMutation({ mutationFn: (id: number) => deleteComment(id), onSuccess });
+  const resolve = useMutation({ mutationFn: (id: number) => resolveComment(id), onSuccess });
+  const unresolve = useMutation({ mutationFn: (id: number) => unresolveComment(id), onSuccess });
+  const resend = useMutation({ mutationFn: (id: number) => resendComment(id), onSuccess });
   const clearSent = useMutation({ mutationFn: () => clearSentComments(worktreeId), onSuccess });
   const copy = useMutation({
     mutationFn: () =>
@@ -63,5 +69,5 @@ export function useCommentActions(worktreeId: string) {
       ),
     onSuccess,
   });
-  return { add, update, remove, clearSent, copy };
+  return { add, update, remove, resolve, unresolve, resend, clearSent, copy };
 }

@@ -1,4 +1,4 @@
-import type { ChangedFile, Comment, WorktreeSummary } from '../api';
+import type { ChangedFile, CommentItem, WorktreeSummary } from '../api';
 
 /** test용 WorktreeSummary. 필요한 필드만 덮어쓴다 */
 export function worktreeFixture(overrides: Partial<WorktreeSummary> = {}): WorktreeSummary {
@@ -35,8 +35,8 @@ export function fileFixture(overrides: Partial<ChangedFile> = {}): ChangedFile {
   };
 }
 
-/** test용 Comment. 필요한 필드만 덮어쓴다 */
-export function commentFixture(overrides: Partial<Comment> = {}): Comment {
+/** test용 CommentItem. 필요한 필드만 덮어쓴다 */
+export function commentFixture(overrides: Partial<CommentItem> = {}): CommentItem {
   return {
     id: 1,
     worktree: 'w',
@@ -50,6 +50,9 @@ export function commentFixture(overrides: Partial<Comment> = {}): Comment {
     updatedAt: 0,
     sentAt: null,
     sentTo: null,
+    sentTurn: null,
+    resolvedAt: null,
+    replyTurn: null,
     ...overrides,
   };
 }
