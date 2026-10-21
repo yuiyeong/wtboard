@@ -138,3 +138,64 @@ fn settings_roundtrip() {
     assert_eq!(s.get("always_on_top").unwrap().as_deref(), Some("0"));
     assert_eq!(SettingsStore::in_memory().get("x").unwrap(), None);
 }
+
+#[test]
+fn resolve_only_sent() {
+    let s = CommentStore::in_memory();
+    let c = s.add(&new("w", "a.rs", 1)).unwrap();
+    assert!(matches!(s.resolve(c.id, 300), Err(StoreError::NotSent)));
+    s.mark_sent(&[c.id], "s1", 100).unwrap();
+    assert_eq!(s.resolve(c.id, 300).unwrap().resolved_at, Some(300));
+    // 이미 해결됨이면 그대로
+    assert_eq!(s.resolve(c.id, 400).unwrap().resolved_at, Some(300));
+    assert!(matches!(s.resolve(999, 1), Err(StoreError::NotFound(999))));
+    assert_eq!(s.unresolve(c.id).unwrap().resolved_at, None);
+    assert_eq!(s.unresolve(c.id).unwrap().resolved_at, None);
+    assert!(matches!(s.unresolve(999), Err(StoreError::NotFound(999))));
+}
+
+#[test]
+fn resend_resets_send_columns() {
+    let s = CommentStore::in_memory();
+    let c = s.add(&new("w", "a.rs", 1)).unwrap();
+    s.mark_sent(&[c.id], "s1", 100).unwrap();
+    s.resolve(c.id, 300).unwrap();
+    let r = s.resend(c.id, 400).unwrap();
+    assert_eq!((r.sent_at, r.sent_to, r.sent_turn, r.resolved_at, r.updated_at), (None, None, None, None, 400));
+    assert_eq!(s.unsent_counts().unwrap()["w"], 1);
+    // 이미 미전송이면 그대로
+    let again = s.resend(c.id, 500).unwrap();
+    assert_eq!((again.sent_at, again.updated_at), (None, 400));
+    assert!(matches!(s.resend(999, 1), Err(StoreError::NotFound(999))));
+}
+
+#[test]
+fn list_order_three_tiers() {
+    let s = CommentStore::in_memory();
+    let a9 = s.add(&new("w", "a.rs", 9)).unwrap();
+    let b1 = s.add(&new("w", "b.rs", 1)).unwrap();
+    let a2 = s.add(&new("w", "a.rs", 2)).unwrap();
+    let b3 = s.add(&new("w", "b.rs", 3)).unwrap();
+    s.mark_sent(&[b1.id, a2.id], "s1", 100).unwrap();
+    s.resolve(a2.id, 200).unwrap();
+    let ids: Vec<i64> = s.list("w").unwrap().iter().map(|c| c.id).collect();
+    assert_eq!(ids, vec![a9.id, b3.id, b1.id, a2.id]);
+}
+
+#[test]
+fn clear_and_purge_include_resolved() {
+    let s = CommentStore::in_memory();
+    let sent = s.add(&new("A", "a.rs", 1)).unwrap();
+    let resolved = s.add(&new("A", "a.rs", 2)).unwrap();
+    s.add(&new("A", "a.rs", 3)).unwrap();
+    s.mark_sent(&[sent.id, resolved.id], "s1", 100).unwrap();
+    s.resolve(resolved.id, 200).unwrap();
+    assert_eq!(s.clear_sent("A").unwrap(), 2);
+    assert_eq!(s.list("A").unwrap().len(), 1);
+
+    let c = s.add(&new("w", "a.rs", 1)).unwrap();
+    s.mark_sent(&[c.id], "s1", 100).unwrap();
+    s.resolve(c.id, 999).unwrap();
+    assert_eq!(s.purge_sent_before(150).unwrap(), 1);
+    assert!(s.list("w").unwrap().is_empty());
+}

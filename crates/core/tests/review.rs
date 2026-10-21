@@ -22,6 +22,8 @@ fn comment(id: i64, path: &str, side: Side, line: u32, snippet: &str, body: &str
         updated_at: 1,
         sent_at: None,
         sent_to: None,
+        sent_turn: None,
+        resolved_at: None,
     }
 }
 

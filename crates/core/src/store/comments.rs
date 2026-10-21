@@ -13,8 +13,8 @@ use crate::worktree::now_ms;
 const MAX_BODY_CHARS: usize = 4000;
 const MAX_SNIPPET_CHARS: usize = 500;
 
-const COLUMNS: &str =
-    "id, worktree, path, side, line, view, snippet, body, created_at, updated_at, sent_at, sent_to";
+const COLUMNS: &str = "id, worktree, path, side, line, view, snippet, body, created_at, updated_at, sent_at, sent_to, \
+                       sent_turn, resolved_at";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -63,6 +63,10 @@ pub struct Comment {
     pub updated_at: u64,
     pub sent_at: Option<u64>,
     pub sent_to: Option<String>,
+    /// 첨부한 prompt가 연 turn. 복사(`copy`)로 보냈으면 없음
+    pub sent_turn: Option<u32>,
+    /// 사용자가 해결됨으로 바꾼 시각. 전송된 코멘트만 해결될 수 있다
+    pub resolved_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -90,6 +94,8 @@ fn from_row(r: &Row) -> rusqlite::Result<Comment> {
         updated_at: r.get::<_, i64>(9)? as u64,
         sent_at: r.get::<_, Option<i64>>(10)?.map(|v| v as u64),
         sent_to: r.get(11)?,
+        sent_turn: r.get(12)?,
+        resolved_at: r.get::<_, Option<i64>>(13)?.map(|v| v as u64),
     })
 }
 
@@ -146,12 +152,12 @@ impl CommentStore {
         Ok(get(&conn, id)?.expect("방금 넣은 row"))
     }
 
-    /// 미전송 먼저, 그 안에서 `path, line, id` 순
+    /// 미전송 → 전송됨 → 해결됨, 그 안에서 `path, line, id` 순
     pub fn list(&self, worktree: &str) -> Result<Vec<Comment>, StoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(&format!(
             "SELECT {COLUMNS} FROM comments WHERE worktree = ?1
-             ORDER BY sent_at IS NOT NULL, path, line, id"
+             ORDER BY resolved_at IS NOT NULL, sent_at IS NOT NULL, path, line, id"
         ))?;
         let rows = stmt.query_map(params![worktree], from_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -170,6 +176,38 @@ impl CommentStore {
             (_, Some(comment)) => Ok(comment),
             (_, None) => Err(StoreError::NotFound(id)),
         }
+    }
+
+    /// 전송된 코멘트만 해결됨으로 바꾼다. 이미 해결됨이면 그대로 둔다
+    pub fn resolve(&self, id: i64, now: u64) -> Result<Comment, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE comments SET resolved_at = ?2 WHERE id = ?1 AND sent_at IS NOT NULL AND resolved_at IS NULL",
+            params![id, now as i64],
+        )?;
+        match get(&conn, id)? {
+            Some(c) if c.sent_at.is_none() => Err(StoreError::NotSent),
+            Some(c) => Ok(c),
+            None => Err(StoreError::NotFound(id)),
+        }
+    }
+
+    /// 해결됨을 되돌린다. 해결되지 않은 것이면 그대로
+    pub fn unresolve(&self, id: i64) -> Result<Comment, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("UPDATE comments SET resolved_at = NULL WHERE id = ?1", params![id])?;
+        get(&conn, id)?.ok_or(StoreError::NotFound(id))
+    }
+
+    /// 전송된 코멘트를 미전송으로 되돌린다 (다음 prompt에 다시 붙는다). 이미 미전송이면 그대로
+    pub fn resend(&self, id: i64, now: u64) -> Result<Comment, StoreError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE comments SET sent_at = NULL, sent_to = NULL, sent_turn = NULL, resolved_at = NULL, updated_at = ?2
+             WHERE id = ?1 AND sent_at IS NOT NULL",
+            params![id, now as i64],
+        )?;
+        get(&conn, id)?.ok_or(StoreError::NotFound(id))
     }
 
     /// 이미 없어도 오류가 아니다
