@@ -1,18 +1,21 @@
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   listFiles,
   listSessions,
-  type Comment,
+  type CommentItem,
   type RepoSummary,
+  type SessionSummary,
   type View,
   type WorktreeSummary,
 } from '../api';
-import { byPath, unsentByPath } from '../lib/comments';
+import { scrollToFile } from '../lib/anchor';
+import { byPath, openComments, replyTarget, unsentByPath, type ReplyTarget } from '../lib/comments';
 import { worktreeLabel } from '../lib/selection';
 import { effectiveView, filesKey, pickSession } from '../lib/sessions';
 import { buildTree, flattenFiles, splitCollapsed, type TreeNode } from '../lib/tree';
 import { viewedProgress } from '../lib/viewed';
+import { requestScroll, takeScroll, useNavStore } from '../nav';
 import { useUiStore } from '../store';
 import { useCommentActions, useComments } from '../useComments';
 import { useSetViewed } from '../useSetViewed';
@@ -26,7 +29,8 @@ import { ViewTabs } from './ViewTabs';
 const COLLAPSED_DIR = '\0collapsed';
 
 /** 코멘트가 없는 파일에 넘기는 빈 배열. 매번 새 배열을 만들면 FileDiff memo가 깨진다 */
-const NO_COMMENTS: Comment[] = [];
+const NO_COMMENTS: CommentItem[] = [];
+const NO_SESSIONS: SessionSummary[] = [];
 
 const EMPTY_TEXT: Record<View, string> = {
   branch: 'base 대비 변경 사항이 없습니다.',
@@ -79,10 +83,27 @@ export function WorktreeView({ repo, worktree, autoAttachComments }: Props) {
 
   const comments = useComments(worktree.id);
   const commentList = comments.data ?? NO_COMMENTS;
-  const commentsByPath = useMemo(() => byPath(commentList), [commentList]);
+  // 해결됨 코멘트는 diff에 그리지 않는다 (목록 popover에만)
+  const commentsByPath = useMemo(() => byPath(openComments(commentList)), [commentList]);
   const unsentPaths = useMemo(() => unsentByPath(commentList), [commentList]);
   // mutateAsync는 참조가 안정적이라 FileDiff memo를 깨지 않는다
-  const { add, update, remove } = useCommentActions(worktree.id);
+  const { add, update, remove, resolve, resend } = useCommentActions(worktree.id);
+  const sessionList = sessions.data ?? NO_SESSIONS;
+  const replyTargetOf = useCallback((c: CommentItem) => replyTarget(c, sessionList), [sessionList]);
+  // `응답 #n 보기`: 그 세션의 응답 view로 옮기고, 파일 목록이 오면 그 파일로 스크롤한다
+  const openReply = useCallback(
+    (c: CommentItem, target: ReplyTarget) => {
+      selectSession(worktree.id, target.sessionId);
+      setView(worktree.id, target.view);
+      requestScroll(worktree.id, c.path);
+    },
+    [worktree.id, selectSession, setView],
+  );
+  const pendingScroll = useNavStore((s) => s.pendingScroll);
+  useEffect(() => {
+    const path = takeScroll(worktree.id, listedPaths);
+    if (path) scrollToFile(path);
+  }, [pendingScroll, listedPaths, worktree.id]);
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -157,6 +178,10 @@ export function WorktreeView({ repo, worktree, autoAttachComments }: Props) {
               onAdd={add.mutateAsync}
               onUpdate={update.mutateAsync}
               onDelete={remove.mutateAsync}
+              onResolve={resolve.mutateAsync}
+              onResend={resend.mutateAsync}
+              replyTargetOf={replyTargetOf}
+              onOpenReply={openReply}
             />
           ))}
         </main>

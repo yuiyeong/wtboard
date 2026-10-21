@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import type { Comment } from '../api';
+import type { CommentItem } from '../api';
 import { focusedInput, setEdit, startEdit, useDraftStore } from '../drafts';
-import { statusLabel } from '../lib/comments';
+import { statusLabel, type ReplyTarget } from '../lib/comments';
 
 /** 성공하면 resolve, 실패하면 오류로 reject한다. 참조가 안정적이어야 FileDiff memo가 유지된다 */
 export type OnUpdateComment = (vars: { id: number; body: string }) => Promise<unknown>;
-export type OnDeleteComment = (id: number) => Promise<unknown>;
+export type OnCommentAction = (id: number) => Promise<unknown>;
 
 /**
  * 코멘트 입력 (새 코멘트·수정 공용). Cmd+Enter 저장, Esc 취소.
@@ -94,17 +94,39 @@ export function CommentInput({
   );
 }
 
-interface SavedProps {
+/** 저장된 코멘트에 필요한 것. 모두 참조가 안정적이어야 FileDiff memo가 유지된다 */
+export interface SavedProps {
   onUpdate: OnUpdateComment;
-  onDelete: OnDeleteComment;
+  onDelete: OnCommentAction;
+  /** 전송됨 → 해결됨 */
+  onResolve: OnCommentAction;
+  /** 전송됨 → 미전송 (다음 prompt에 다시 붙는다) */
+  onResend: OnCommentAction;
+  /** 전송됨 코멘트의 `응답 #n 보기` 대상. 없으면 버튼을 두지 않는다 */
+  replyTargetOf: (c: CommentItem) => ReplyTarget | null;
+  onOpenReply: (c: CommentItem, target: ReplyTarget) => void;
 }
 
-/** 저장된 코멘트 하나. 미전송은 파란 테두리, 전송됨은 회색. 미전송만 `수정` */
-export function SavedComment({ comment, onUpdate, onDelete }: SavedProps & { comment: Comment }) {
+const ACTION = 'hover:underline disabled:opacity-50';
+
+/**
+ * 저장된 코멘트 하나. 미전송은 파란 테두리에 `수정`, 전송됨은 회색에 `다시 보내기`·`해결됨`과 응답 버튼.
+ * 해결됨은 diff에 오지 않는다 (`openComments`가 거른다)
+ */
+export function SavedComment({
+  comment,
+  onUpdate,
+  onDelete,
+  onResolve,
+  onResend,
+  replyTargetOf,
+  onOpenReply,
+}: SavedProps & { comment: CommentItem }) {
   const editing = useDraftStore((s) => s.edits[comment.id]);
-  const [deleting, setDeleting] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const unsent = comment.sentAt === null;
+  const reply = unsent ? null : replyTargetOf(comment);
 
   if (editing !== undefined) {
     return (
@@ -121,14 +143,16 @@ export function SavedComment({ comment, onUpdate, onDelete }: SavedProps & { com
     );
   }
 
-  const remove = async () => {
-    setDeleting(true);
+  // 성공하면 목록이 다시 읽혀 이 widget이 바뀌거나 사라진다. 다시 보내기는 같은 자리에 남으므로 busy를 푼다
+  const run = async (action: OnCommentAction) => {
+    setBusy(true);
     setError(null);
     try {
-      await onDelete(comment.id);
+      await action(comment.id);
     } catch (e) {
       setError(String(e));
-      setDeleting(false);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -140,12 +164,26 @@ export function SavedComment({ comment, onUpdate, onDelete }: SavedProps & { com
         }`}
       >
         <span className="flex-1">{statusLabel(comment)}</span>
-        {unsent && (
-          <button onClick={() => startEdit(comment.id, comment.body)} className="hover:underline">
-            수정
+        {reply && (
+          <button onClick={() => onOpenReply(comment, reply)} className="text-amber-700 hover:underline">
+            {reply.label}
           </button>
         )}
-        <button onClick={remove} disabled={deleting} className="hover:underline disabled:opacity-50">
+        {unsent ? (
+          <button onClick={() => startEdit(comment.id, comment.body)} className={ACTION}>
+            수정
+          </button>
+        ) : (
+          <>
+            <button onClick={() => run(onResend)} disabled={busy} className={ACTION}>
+              다시 보내기
+            </button>
+            <button onClick={() => run(onResolve)} disabled={busy} className={ACTION}>
+              해결됨
+            </button>
+          </>
+        )}
+        <button onClick={() => run(onDelete)} disabled={busy} className={ACTION}>
           삭제
         </button>
       </div>
@@ -156,6 +194,6 @@ export function SavedComment({ comment, onUpdate, onDelete }: SavedProps & { com
 }
 
 /** 한 줄 아래에 보이는 코멘트들 */
-export function CommentThread({ comments, ...props }: SavedProps & { comments: Comment[] }) {
+export function CommentThread({ comments, ...props }: SavedProps & { comments: CommentItem[] }) {
   return comments.map((c) => <SavedComment key={c.id} comment={c} {...props} />);
 }

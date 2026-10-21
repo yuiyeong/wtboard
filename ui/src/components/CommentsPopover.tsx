@@ -1,50 +1,106 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Comment } from '../api';
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import type { CommentItem } from '../api';
 import { scrollToFile } from '../lib/anchor';
-import { firstLine, sortForList, statusLabel } from '../lib/comments';
+import { firstLine, headerLabel, replyCount, replyLabel, sortForList, statusLabel } from '../lib/comments';
 import { useCommentActions } from '../useComments';
 
 interface Props {
   worktreeId: string;
-  comments: Comment[];
+  comments: CommentItem[];
   /** 지금 파일 목록에 있는 path. 없는 파일의 코멘트는 `목록에 없음`이고 눌러도 스크롤하지 않는다 */
   listedPaths: Set<string>;
   autoAttach: boolean;
 }
 
-/** worktree header의 `💬 미전송 n` 버튼과 코멘트 목록 popover */
+/** worktree header의 `💬 미전송 a · 응답 b` 버튼과 코멘트 목록 popover (미전송 → 전송됨 → 해결됨 묶음) */
 export function CommentsPopover({ worktreeId, comments, listedPaths, autoAttach }: Props) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
-  const { copy, clearSent } = useCommentActions(worktreeId);
+  const { copy, clearSent, resolve, unresolve, resend } = useCommentActions(worktreeId);
   const sorted = useMemo(() => sortForList(comments), [comments]);
+  const active = sorted.filter((c) => c.resolvedAt === null);
+  const resolved = sorted.filter((c) => c.resolvedAt !== null);
   const unsent = comments.filter((c) => c.sentAt === null).length;
   const sent = comments.length - unsent;
-  const error = copy.error ?? clearSent.error;
+  const error = copy.error ?? clearSent.error ?? resolve.error ?? unresolve.error ?? resend.error;
+  const color = unsent > 0 ? 'text-blue-600' : replyCount(comments) > 0 ? 'text-amber-600' : 'text-gray-400';
 
   // popover 밖을 누르면 닫는다
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => {
+    const onDown = (e: globalThis.MouseEvent) => {
       if (!root.current?.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
 
-  const jump = (c: Comment) => {
+  const jump = (c: CommentItem) => {
     if (!listedPaths.has(c.path)) return;
     scrollToFile(c.path);
     setOpen(false);
   };
 
+  // row 전체가 "파일로 가기"라서 row 안의 버튼은 그 클릭을 막는다
+  const act = (mutate: (id: number) => void, id: number) => (e: MouseEvent) => {
+    e.stopPropagation();
+    mutate(id);
+  };
+
+  const row = (c: CommentItem) => {
+    const listed = listedPaths.has(c.path);
+    const open = c.resolvedAt === null;
+    const reply = open && c.sentAt !== null ? replyLabel(c) : null;
+    return (
+      <li
+        key={c.id}
+        onClick={() => jump(c)}
+        className={`px-3 py-1.5 ${listed ? 'cursor-pointer hover:bg-gray-100' : ''}`}
+      >
+        <span className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate font-mono text-gray-700" title={c.path}>
+            {c.path}:{c.line}
+          </span>
+          {/* 삭제된 줄의 코멘트는 옛 줄 번호라 새 줄 번호와 헷갈리지 않게 표시한다 */}
+          {c.side === 'old' && (
+            <span className="shrink-0 text-gray-500" title="옛 줄 번호입니다">
+              삭제된 줄
+            </span>
+          )}
+          {!listed && <span className="shrink-0 text-gray-400">목록에 없음</span>}
+          {reply && <span className="shrink-0 text-amber-700">{reply}</span>}
+          <span className={`shrink-0 ${c.sentAt === null ? 'text-blue-600' : 'text-gray-400'}`}>
+            {statusLabel(c)}
+          </span>
+        </span>
+        <span className="flex items-center gap-2">
+          <span className={`min-w-0 flex-1 truncate ${c.sentAt === null ? 'text-gray-800' : 'text-gray-500'}`}>
+            {firstLine(c.body)}
+          </span>
+          {open && c.sentAt !== null && (
+            <>
+              <button onClick={act(resolve.mutate, c.id)} className="shrink-0 text-gray-500 hover:underline">
+                해결됨
+              </button>
+              <button onClick={act(resend.mutate, c.id)} className="shrink-0 text-gray-500 hover:underline">
+                다시 보내기
+              </button>
+            </>
+          )}
+          {!open && (
+            <button onClick={act(unresolve.mutate, c.id)} className="shrink-0 text-gray-500 hover:underline">
+              되돌리기
+            </button>
+          )}
+        </span>
+      </li>
+    );
+  };
+
   return (
     <div ref={root} className="relative">
-      <button
-        onClick={() => setOpen(!open)}
-        className={`rounded px-1.5 py-0.5 text-xs hover:bg-gray-100 ${unsent > 0 ? 'text-blue-600' : 'text-gray-400'}`}
-      >
-        {unsent > 0 ? `💬 미전송 ${unsent}` : '💬'}
+      <button onClick={() => setOpen(!open)} className={`rounded px-1.5 py-0.5 text-xs hover:bg-gray-100 ${color}`}>
+        {headerLabel(comments)}
       </button>
       {open && (
         <div className="absolute top-full right-0 z-20 mt-1 w-96 rounded border border-gray-200 bg-white text-xs shadow-lg">
@@ -80,38 +136,15 @@ export function CommentsPopover({ worktreeId, comments, listedPaths, autoAttach 
           {sorted.length === 0 ? (
             <p className="px-3 py-3 text-gray-500">코멘트가 없습니다</p>
           ) : (
-            <ul className="max-h-[60vh] overflow-y-auto py-1">
-              {sorted.map((c) => {
-                const listed = listedPaths.has(c.path);
-                return (
-                  <li key={c.id}>
-                    <button
-                      onClick={() => jump(c)}
-                      className={`block w-full px-3 py-1.5 text-left ${listed ? 'hover:bg-gray-100' : 'cursor-default'}`}
-                    >
-                      <span className="flex items-center gap-2">
-                        <span className="min-w-0 flex-1 truncate font-mono text-gray-700" title={c.path}>
-                          {c.path}:{c.line}
-                        </span>
-                        {/* 삭제된 줄의 코멘트는 옛 줄 번호라 새 줄 번호와 헷갈리지 않게 표시한다 */}
-                        {c.side === 'old' && (
-                          <span className="shrink-0 text-gray-500" title="옛 줄 번호입니다">
-                            삭제된 줄
-                          </span>
-                        )}
-                        {!listed && <span className="shrink-0 text-gray-400">목록에 없음</span>}
-                        <span className={`shrink-0 ${c.sentAt === null ? 'text-blue-600' : 'text-gray-400'}`}>
-                          {statusLabel(c)}
-                        </span>
-                      </span>
-                      <span className={`block truncate ${c.sentAt === null ? 'text-gray-800' : 'text-gray-500'}`}>
-                        {firstLine(c.body)}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+            <div className="max-h-[60vh] overflow-y-auto py-1">
+              <ul>{active.map(row)}</ul>
+              {resolved.length > 0 && (
+                <details className="border-t border-gray-100">
+                  <summary className="cursor-pointer px-3 py-1.5 text-gray-500">해결된 코멘트 {resolved.length}개</summary>
+                  <ul>{resolved.map(row)}</ul>
+                </details>
+              )}
+            </div>
           )}
         </div>
       )}

@@ -23,7 +23,7 @@ export const patchKey = (worktreeId: string, path: string, view: View, sessionId
   ['patch', worktreeId, path, view, sessionId ?? null] as const;
 
 /** `#3` 또는 `#3 진행 중` */
-export function turnLabel(s: SessionSummary): string {
+export function turnLabel(s: Pick<SessionSummary, 'turn' | 'turnOpen'>): string {
   return `#${s.turn}${s.turnOpen ? ' 진행 중' : ''}`;
 }
 

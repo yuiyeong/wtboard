@@ -46,8 +46,9 @@ export function useComments(worktreeId: string) {
  */
 export function useCommentActions(worktreeId: string) {
   const queryClient = useQueryClient();
+  const refetchComments = () => queryClient.invalidateQueries({ queryKey: commentsKey(worktreeId) });
   const onSuccess = () => {
-    queryClient.invalidateQueries({ queryKey: commentsKey(worktreeId) });
+    refetchComments();
     queryClient.invalidateQueries({ queryKey: ['repos'] });
   };
   const add = useMutation({ mutationFn: (c: NewComment) => addComment(worktreeId, c), onSuccess });
@@ -55,10 +56,11 @@ export function useCommentActions(worktreeId: string) {
     mutationFn: ({ id, body }: { id: number; body: string }) => updateComment(id, body),
     onSuccess,
   });
-  const remove = useMutation({ mutationFn: (id: number) => deleteComment(id), onSuccess });
-  const resolve = useMutation({ mutationFn: (id: number) => resolveComment(id), onSuccess });
-  const unresolve = useMutation({ mutationFn: (id: number) => unresolveComment(id), onSuccess });
-  const resend = useMutation({ mutationFn: (id: number) => resendComment(id), onSuccess });
+  const remove = useMutation({ mutationFn: deleteComment, onSuccess });
+  // 해결됨·되돌리기는 전송된 코멘트만 바꾸므로 미전송 수(`['repos']`)는 그대로다
+  const resolve = useMutation({ mutationFn: resolveComment, onSuccess: refetchComments });
+  const unresolve = useMutation({ mutationFn: unresolveComment, onSuccess: refetchComments });
+  const resend = useMutation({ mutationFn: resendComment, onSuccess });
   const clearSent = useMutation({ mutationFn: () => clearSentComments(worktreeId), onSuccess });
   const copy = useMutation({
     mutationFn: () =>

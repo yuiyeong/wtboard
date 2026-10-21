@@ -1,5 +1,6 @@
 import { getChangeKey, type ChangeData } from 'react-diff-view';
 import type { Comment, CommentItem, CopiedComments, SessionSummary, Side, View } from '../api';
+import { turnLabel } from './sessions';
 import { formatHHMM } from './time';
 
 export const commentsKey = (worktreeId: string) => ['comments', worktreeId] as const;
@@ -32,21 +33,21 @@ export function anchorOf(change: ChangeData, _clicked: Side): Anchor {
   return { side: 'new', line: change.newLineNumber, snippet: snippetOf(change.content) };
 }
 
-export interface PlacedComments {
+export interface PlacedComments<T extends Comment = Comment> {
   /** react-diff-view `getChangeKey` → 그 줄 아래에 보일 코멘트 (입력 순서 유지) */
-  byChangeKey: Map<string, Comment[]>;
+  byChangeKey: Map<string, T[]>;
   /** 맞는 줄이 없는 코멘트. 파일 diff 맨 위에 snippet과 함께 보인다 */
-  outdated: Comment[];
+  outdated: T[];
 }
 
 /**
  * 코멘트를 지금 diff의 줄에 맞춘다. (side, line)인 줄이 있고 내용이 snippet과 같아야 한다.
  * `old` side는 view마다 before가 다르므로 단 view와 지금 view가 같을 때만 맞춘다
  */
-export function placeComments(comments: Comment[], changes: ChangeData[], view: View): PlacedComments {
+export function placeComments<T extends Comment>(comments: T[], changes: ChangeData[], view: View): PlacedComments<T> {
   const bySideLine = new Map(changes.map((change) => [sideLineOf(change), change]));
-  const byChangeKey = new Map<string, Comment[]>();
-  const outdated: Comment[] = [];
+  const byChangeKey = new Map<string, T[]>();
+  const outdated: T[] = [];
   for (const c of comments) {
     const change = placeable(c.side, c.view, view) ? bySideLine.get(`${c.side}:${c.line}`) : undefined;
     if (!change || snippetOf(change.content) !== c.snippet) {
@@ -100,15 +101,13 @@ export function nextDraft(current: Draft | undefined, anchor: Anchor, view: View
   return { anchor, body: '', view };
 }
 
+/** 상태 순위: 미전송 0 → 전송됨 1 → 해결됨 2 (해결됨은 늘 전송됨이기도 하다) */
+const stateRank = (c: Comment) => (c.resolvedAt !== null ? 2 : c.sentAt !== null ? 1 : 0);
+
 /** 목록 순서: 미전송 → 전송됨 → 해결됨, 그 안에서 path → line → id. 서버(`list_comments`)와 같다 */
 export function sortForList<T extends Comment>(comments: T[]): T[] {
   return [...comments].sort(
-    (a, b) =>
-      Number(a.resolvedAt !== null) - Number(b.resolvedAt !== null) ||
-      Number(a.sentAt !== null) - Number(b.sentAt !== null) ||
-      compare(a.path, b.path) ||
-      a.line - b.line ||
-      a.id - b.id,
+    (a, b) => stateRank(a) - stateRank(b) || compare(a.path, b.path) || a.line - b.line || a.id - b.id,
   );
 }
 
@@ -149,8 +148,8 @@ export function replyTarget(c: CommentItem, sessions: SessionSummary[]): ReplyTa
   const session = sessions.find((s) => s.id === c.sentTo);
   if (!session) return null;
   const latest = session.turn === c.replyTurn;
-  const progress = latest && session.turnOpen ? ' 진행 중' : '';
-  return { sessionId: session.id, view: latest ? 'turn' : 'session', label: `응답 #${c.replyTurn}${progress} 보기` };
+  const turn = turnLabel({ turn: c.replyTurn, turnOpen: latest && session.turnOpen });
+  return { sessionId: session.id, view: latest ? 'turn' : 'session', label: `응답 ${turn} 보기` };
 }
 
 /** 목록 row의 짧은 표시 `응답 #n` */
@@ -176,8 +175,8 @@ export function unsentByPath(comments: Comment[]): Map<string, number> {
 }
 
 /** path별 코멘트 (입력 순서 유지). 파일 diff마다 자기 코멘트만 넘긴다 */
-export function byPath(comments: Comment[]): Map<string, Comment[]> {
-  const groups = new Map<string, Comment[]>();
+export function byPath<T extends Comment>(comments: T[]): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
   for (const c of comments) {
     const group = groups.get(c.path);
     if (group) group.push(c);

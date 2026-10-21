@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Diff, getChangeKey, Hunk, parseDiff, type ChangeData, type RenderGutter } from 'react-diff-view';
-import { getPatch, type ChangedFile, type Comment, type NewComment, type PatchBody, type View } from '../api';
+import { getPatch, type ChangedFile, type CommentItem, type NewComment, type PatchBody, type View } from '../api';
 import { fileAnchorId } from '../lib/anchor';
 import { changeDraft, closeDraft, draftKey, isWriting, openDraft, useDraftStore } from '../drafts';
 import { anchorOf, placeComments, placeDraft, type Anchor, type Draft } from '../lib/comments';
@@ -11,19 +11,23 @@ import { patchKey } from '../lib/sessions';
 import { useInView } from '../lib/useInView';
 import { initiallyOpen, nextOpen } from '../lib/viewed';
 import type { ViewType } from '../store';
-import { CommentInput, CommentThread, SavedComment, type OnDeleteComment, type OnUpdateComment } from './CommentWidget';
+import { CommentInput, CommentThread, SavedComment, type SavedProps } from './CommentWidget';
 import { LineCounts } from './FileTree';
 
 /** 성공하면 resolve, 실패하면 오류로 reject한다 */
 export type OnAddComment = (comment: NewComment) => Promise<unknown>;
 
 /** 코멘트 표시·입력에 필요한 것. 모두 참조가 안정적이어야 memo가 유지된다 */
-interface CommentProps {
-  /** 이 파일의 코멘트 */
-  comments: Comment[];
+interface CommentProps extends SavedProps {
+  /** 이 파일의 코멘트 (해결됨 제외) */
+  comments: CommentItem[];
   onAdd: OnAddComment;
-  onUpdate: OnUpdateComment;
-  onDelete: OnDeleteComment;
+}
+
+/** `SavedProps`만 골라낸다 (CommentThread·OutdatedComments에 넘길 것) */
+function savedProps(p: SavedProps): SavedProps {
+  const { onUpdate, onDelete, onResolve, onResend, replyTargetOf, onOpenReply } = p;
+  return { onUpdate, onDelete, onResolve, onResend, replyTargetOf, onOpenReply };
 }
 
 interface Props extends CommentProps {
@@ -160,12 +164,17 @@ function TextDiff({
   view,
   comments,
   onAdd,
-  onUpdate,
-  onDelete,
   draft,
   draftKey,
+  ...rest
 }: Omit<PatchViewProps, 'body'> & { diff: string }) {
-  const commentProps = { draft, draftKey, onAdd, onUpdate, onDelete, path };
+  const { onUpdate, onDelete, onResolve, onResend, replyTargetOf, onOpenReply } = rest;
+  // 참조가 안정적인 handler만 모아 widget memo가 유지되게 한다
+  const saved = useMemo(
+    () => ({ onUpdate, onDelete, onResolve, onResend, replyTargetOf, onOpenReply }),
+    [onUpdate, onDelete, onResolve, onResend, replyTargetOf, onOpenReply],
+  );
+  const commentProps = { draft, draftKey, onAdd, path, ...saved };
   const file = useMemo(() => parseDiff(diff)[0], [diff]);
   const tokens = useMemo(() => (file ? tokenizeHunks(file.hunks, languageForPath(path)) : undefined), [file, path]);
   const changes = useMemo(() => file?.hunks.flatMap((h) => h.changes) ?? NO_CHANGES, [file]);
@@ -200,13 +209,13 @@ function TextDiff({
       const list = placed.byChangeKey.get(key);
       out[key] = (
         <div className="space-y-2 bg-gray-50 px-3 py-2 font-sans">
-          {list && <CommentThread comments={list} onUpdate={onUpdate} onDelete={onDelete} />}
+          {list && <CommentThread comments={list} {...saved} />}
           {key === draftAt && draft && <DraftInput draft={draft} draftKey={draftKey} onAdd={onAdd} path={path} />}
         </div>
       );
     }
     return out;
-  }, [placed, draftAt, draft, draftKey, path, onAdd, onUpdate, onDelete]);
+  }, [placed, draftAt, draft, draftKey, path, onAdd, saved]);
 
   if (!file || file.hunks.length === 0) {
     return (
@@ -270,13 +279,12 @@ function OutdatedComments({
   outdated,
   draftOutdated,
   ...props
-}: Omit<DraftProps, 'draft'> & {
-  draft: Draft | undefined;
-  outdated: Comment[];
-  draftOutdated: boolean;
-  onUpdate: OnUpdateComment;
-  onDelete: OnDeleteComment;
-}) {
+}: Omit<DraftProps, 'draft'> &
+  SavedProps & {
+    draft: Draft | undefined;
+    outdated: CommentItem[];
+    draftOutdated: boolean;
+  }) {
   const draft = draftOutdated ? props.draft : undefined;
   const count = outdated.length + (draft ? 1 : 0);
   if (count === 0) return null;
@@ -287,7 +295,7 @@ function OutdatedComments({
         {outdated.map((c) => (
           <li key={c.id}>
             <LineLabel {...c} />
-            <SavedComment comment={c} onUpdate={props.onUpdate} onDelete={props.onDelete} />
+            <SavedComment comment={c} {...savedProps(props)} />
           </li>
         ))}
         {draft && (
