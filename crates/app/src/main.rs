@@ -1,4 +1,5 @@
 mod comments;
+mod hook;
 mod tray;
 
 use std::collections::HashSet;
@@ -260,6 +261,11 @@ fn open_registry(handle: &AppHandle) -> Result<Registry, String> {
     for w in [viewed_warning, comments_warning, settings_warning].into_iter().flatten() {
         reg.warn(w);
     }
+    // 옛 hook binary는 schema가 올라간 DB를 열지 못해 첨부가 조용히 멈춘다
+    let bin = hook::hook_binary();
+    if let Some(message) = hook::check(&bin) {
+        reg.warn(EntryError { path: bin.display().to_string(), message });
+    }
     let sessions = sessions_dir(&data);
     match watch_sessions(handle, data) {
         Ok(h) => {
@@ -311,6 +317,9 @@ fn main() {
             comments::clear_sent_comments,
             comments::copy_comments,
             comments::mark_comments_sent,
+            comments::resolve_comment,
+            comments::unresolve_comment,
+            comments::resend_comment,
         ])
         .build(tauri::generate_context!())
         .expect("wtboard 실행 실패")
