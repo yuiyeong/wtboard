@@ -103,10 +103,10 @@ auto_attach_comments = true    # false면 hook이 리뷰 코멘트를 prompt에 
    scripts/install-hook.sh
    ```
 
-2. 스크립트가 안내하는 두 명령을 직접 실행한다 (스크립트는 Claude 설정을 건드리지 않는다).
+2. 스크립트가 마지막에 출력하는 두 명령을 그대로 실행한다 (스크립트는 Claude 설정을 건드리지 않는다). `<wtboard repo root>`는 이 레포를 clone한 폴더다. 그 안의 `plugin/`이 local marketplace(`plugin/.claude-plugin/marketplace.json`)이고, 실제 plugin은 `plugin/wtboard/`다.
 
    ```bash
-   claude plugin marketplace add /path/to/wtboard/plugin
+   claude plugin marketplace add <wtboard repo root>/plugin   # 예: ~/projects/wtboard/plugin
    claude plugin install wtboard@wtboard-local
    ```
 
@@ -163,6 +163,67 @@ pnpm tauri build             # 배포용 .app / .dmg → target/release/bundle/
 | `WTBOARD_CONFIG` | config.toml 경로 (기본 `~/.wtboard/config.toml`). 데이터 폴더도 이 파일 옆이다 |
 | `WTBOARD_HOOK_BIN` | hook binary 경로 (기본 `~/.wtboard/bin/wtboard-hook`) |
 | `WTBOARD_SLOW_LIST_MS` | 변경 목록 계산이 이 시간(ms)을 넘으면 fsmonitor 안내 banner (기본 500) |
+
+## 배포하는 법
+
+App Store나 서버 없이 이 레포에서 직접 빌드해 쓰는 로컬 앱이다. 배포는 release bundle을 만들고 앱·hook binary·plugin 세 가지를 설치하는 것이다.
+
+### 1. release bundle 만들기
+
+```bash
+source ~/.cargo/env
+pnpm tauri build             # ui build(tsc + vite) → Rust release build → .app / .dmg
+```
+
+산출물은 `target/release/bundle/` 아래에 생긴다. 빌드한 Mac의 architecture(Apple Silicon 또는 Intel)용이다. 둘 다 담은 universal binary가 필요하면 `rustup target add x86_64-apple-darwin aarch64-apple-darwin` 뒤 `pnpm tauri build --target universal-apple-darwin`.
+
+| 산출물 | 경로 |
+|---|---|
+| 앱 | `target/release/bundle/macos/wtboard.app` |
+| 디스크 이미지 | `target/release/bundle/dmg/wtboard_<version>_<arch>.dmg` |
+| hook binary | `target/release/wtboard-hook`. `pnpm tauri build`는 만들지 않는다. `scripts/install-hook.sh`(= `cargo build --release -p wtboard-hook`)가 만든다 |
+
+### 2. 앱 설치
+
+`wtboard.app`을 `/Applications`로 옮긴다. .dmg를 열어 드래그해도 같다.
+
+```bash
+rm -rf /Applications/wtboard.app && cp -R target/release/bundle/macos/wtboard.app /Applications/
+```
+
+### 3. hook binary와 plugin 설치
+
+앱 bundle에 hook binary는 들어 있지 않으므로 따로 설치한다. "환경 설정 > Claude Code plugin 설치"의 두 단계와 같다.
+
+```bash
+scripts/install-hook.sh                                      # release 빌드 → ~/.wtboard/bin/wtboard-hook
+claude plugin marketplace add <wtboard repo root>/plugin     # 처음 한 번
+claude plugin install wtboard@wtboard-local                  # 처음 한 번
+```
+
+plugin은 한 번 설치하면 그대로 두고, hook binary는 코드가 바뀔 때마다 다시 설치한다. 앱이 시작할 때 설치된 hook의 schema가 앱과 다르면 sidebar에 경고를 띄우므로, 그때 이 스크립트를 다시 돌리면 된다.
+
+### 4. 설정
+
+`~/.wtboard/config.toml`을 쓴다 ("환경 설정" 참고). Finder에서 띄운 앱은 PATH에 Homebrew 경로가 없지만, `gh`는 `/opt/homebrew/bin`과 `/usr/local/bin`을 직접 찾아보므로 그대로 동작한다.
+
+### 다른 Mac에 보내기
+
+bundle은 ad-hoc 서명만 있고 Developer ID signing과 notarization은 하지 않는다. 빌드한 Mac에서 바로 쓰면 문제가 없지만, .dmg나 .zip을 다른 Mac에 보내 열면 Gatekeeper가 막는다. 받은 쪽에서 한 번 허용한다.
+
+```bash
+xattr -dr com.apple.quarantine /Applications/wtboard.app
+```
+
+또는 첫 실행이 막힌 직후 시스템 설정 > 개인정보 보호 및 보안에서 "그래도 열기". 받은 Mac에도 hook binary는 따로 필요하다. wtboard 레포를 clone해 `scripts/install-hook.sh`를 돌리거나, 같은 architecture의 Mac에서 `scripts/install-hook.sh`로 만든 `target/release/wtboard-hook`을 `~/.wtboard/bin/`에 복사하고 plugin 두 명령을 실행한다.
+
+### version 올리기
+
+세 곳을 같이 올린다. `Cargo.toml`의 workspace version(앱·hook·core 공용), `crates/app/tauri.conf.json`의 `version`, `plugin/wtboard/.claude-plugin/plugin.json`의 `version`. `wtboard-hook version` 출력은 Cargo version을 쓰지만, 앱이 옛 hook을 판정하는 기준은 version이 아니라 `state.sqlite` schema 번호다.
+
+### 업데이트
+
+새 코드로 1~3을 다시 한다. `state.sqlite` schema가 올라갔으면 앱이 시작할 때 migration한다. 봤음 상태와 코멘트는 그대로 남는다.
 
 ## 사용하는 법
 
