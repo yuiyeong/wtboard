@@ -7,7 +7,6 @@ use std::time::Duration;
 use serde_json::json;
 use wtboard_core::git::Git;
 use wtboard_core::review::{self, system_message};
-use wtboard_core::session::SessionDir;
 use wtboard_core::store::config::Config;
 use wtboard_core::store::{data_dir, db};
 use wtboard_core::watch::WatchLayout;
@@ -17,7 +16,8 @@ use crate::{now_ms, HookInput, HookResult};
 /// 앱이 쓰는 중이어도 prompt를 오래 붙잡지 않는다
 const BUSY: Duration = Duration::from_secs(1);
 
-pub fn attach(input: &HookInput, dir: &SessionDir, out: &mut impl Write) -> HookResult {
+/// `turn`은 이 prompt가 여는 turn (`turn::next_turn`)
+pub fn attach(input: &HookInput, turn: u32, out: &mut impl Write) -> HookResult {
     // `/compact` 같은 명령에 붙으면 반영되지 않은 채 전송됨이 된다
     if input.prompt.as_deref().is_some_and(is_slash_command) {
         return Ok(());
@@ -30,8 +30,6 @@ pub fn attach(input: &HookInput, dir: &SessionDir, out: &mut impl Write) -> Hook
     let Ok(layout) = WatchLayout::detect(&Git::new(&input.cwd)) else { return Ok(()) };
     let Some(mut conn) = db::open_existing(&data_dir().join("state.sqlite"), BUSY)? else { return Ok(()) };
     let worktree = layout.root.to_string_lossy();
-    // 이 prompt가 여는 turn. `turn::prompt_submit`이 뒤이어 같은 계산으로 meta.turn을 올린다
-    let turn = dir.read_meta().map_or(0, |m| m.turn) + 1;
     review::attach(&mut conn, &worktree, &input.session_id, turn, now_ms(), |rendered| {
         let output = json!({
             "systemMessage": system_message(rendered.included.len(), rendered.remaining),

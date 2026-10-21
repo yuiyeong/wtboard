@@ -20,12 +20,19 @@ pub fn session_start(dir: &SessionDir, input: &HookInput) -> HookResult {
     Ok(())
 }
 
+/// 다음 prompt가 열 turn 번호. meta가 없으면 (SessionStart를 놓침) 첫 turn
+pub fn next_turn(meta: Option<&Meta>) -> u32 {
+    meta.map_or(0, |m| m.turn) + 1
+}
+
 /// 열린 turn을 닫고 다음 turn을 연다. SessionStart를 놓친 세션 (plugin을 세션 중간에 켬)은 여기서 meta를 만든다
 pub fn prompt_submit(dir: &SessionDir, input: &HookInput) -> HookResult {
-    let mut meta = dir.read_meta().unwrap_or_else(|| new_meta(input));
+    let read = dir.read_meta();
+    let turn = next_turn(read.as_ref());
+    let mut meta = read.unwrap_or_else(|| new_meta(input));
     // 스냅샷을 못 찍어도 turn은 넘긴다. 아니면 같은 turn에 계속 머문다. 오류는 끝에 알린다
     let closed = close_turn(dir, &mut meta);
-    meta.turn += 1;
+    meta.turn = turn;
     meta.turn_open = true;
     dir.write_meta(&meta)?;
     dir.append_event(&turn_event(meta.turn, EventKind::TurnStart))?;

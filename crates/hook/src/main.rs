@@ -95,7 +95,7 @@ fn run(sub: &str) -> HookResult {
         return handler(&dir, &input);
     }
     // 첨부와 turn 기록은 서로의 오류에 막히지 않는다
-    let attached = comments::attach(&input, &dir, &mut io::stdout().lock());
+    let attached = comments::attach(&input, turn::next_turn(dir.read_meta().as_ref()), &mut io::stdout().lock());
     let recorded = handler(&dir, &input);
     match (attached, recorded) {
         (Err(a), Err(r)) => Err(format!("{a}; {r}").into()),
