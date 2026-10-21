@@ -166,6 +166,15 @@ pub(crate) fn touched(events: &[Event], root: &Path, roots: &[PathBuf]) -> Vec<T
     out
 }
 
+/// worktree 안의 파일별로 그 파일을 건드린 turn들 (worktree 상대 경로 → turn 집합). turn 0은 1로 센다
+pub fn touched_turns(dir: &SessionDir, worktree_root: &Path, all_roots: &[PathBuf]) -> HashMap<String, BTreeSet<u32>> {
+    let mut out: HashMap<String, BTreeSet<u32>> = HashMap::new();
+    for t in touched(&dir.events(), worktree_root, &with_root(worktree_root, all_roots)) {
+        out.entry(t.rel).or_default().insert(t.turn);
+    }
+    out
+}
+
 /// `roots`에 `root`가 없으면 더한다
 pub(crate) fn with_root(root: &Path, roots: &[PathBuf]) -> Vec<PathBuf> {
     let mut out = roots.to_vec();

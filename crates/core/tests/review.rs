@@ -145,6 +145,13 @@ fn sent_to_of(path: &std::path::Path) -> Vec<Option<String>> {
     list.into_iter().map(|c| c.sent_to).collect()
 }
 
+fn sent_turns_of(path: &std::path::Path) -> Vec<Option<u32>> {
+    let store = CommentStore::open(path).unwrap();
+    let mut list = store.list("/w").unwrap();
+    list.sort_by_key(|c| c.id);
+    list.into_iter().map(|c| c.sent_turn).collect()
+}
+
 fn three_long(path: &std::path::Path) -> Vec<i64> {
     let store = CommentStore::open(path).unwrap();
     (1..=3).map(|i| store.add(&new_comment(i, "가".repeat(4000))).unwrap().id).collect()
@@ -157,7 +164,7 @@ fn attach_marks_only_included() {
     let ids = three_long(&path);
     let mut conn = db::open_state(&path).unwrap();
     let mut emitted = Vec::new();
-    let r = attach(&mut conn, "/w", "s1", 500, |r| {
+    let r = attach(&mut conn, "/w", "s1", 3, 500, |r| {
         emitted = r.included.clone();
         Ok(())
     })
@@ -183,7 +190,7 @@ fn attach_emit_error_keeps_unsent() {
     let path = dir.path().join("state.sqlite");
     three_long(&path);
     let mut conn = db::open_state(&path).unwrap();
-    let err = attach(&mut conn, "/w", "s1", 500, |_| Err(std::io::Error::other("broken pipe"))).unwrap_err();
+    let err = attach(&mut conn, "/w", "s1", 3, 500, |_| Err(std::io::Error::other("broken pipe"))).unwrap_err();
     assert!(matches!(err, StoreError::Emit(_)), "{err:?}");
     assert_eq!(sent_to_of(&path), vec![None, None, None]);
 }
@@ -193,7 +200,7 @@ fn attach_without_comments_skips_emit() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("state.sqlite");
     let mut conn = db::open_state(&path).unwrap();
-    let r = attach(&mut conn, "/w", "s1", 500, |_| panic!("emit이 불리면 안 됨")).unwrap();
+    let r = attach(&mut conn, "/w", "s1", 3, 500, |_| panic!("emit이 불리면 안 됨")).unwrap();
     assert!(r.is_none());
 }
 
@@ -211,7 +218,7 @@ fn concurrent_attach_claims_once() {
             std::thread::spawn(move || {
                 let mut conn = db::open_state(&path).unwrap();
                 barrier.wait();
-                attach(&mut conn, "/w", session, 500, |r| {
+                attach(&mut conn, "/w", session, 1, 500, |r| {
                     emitted.lock().unwrap().push(r.included.clone());
                     Ok(())
                 })
@@ -227,4 +234,36 @@ fn concurrent_attach_claims_once() {
     assert_eq!(all, ids, "합집합 = 전체, 교집합 = 없음");
     let sent = sent_to_of(&path);
     assert!(sent.iter().all(|s| s.is_some()));
+}
+
+#[test]
+fn attach_records_sent_turn_and_copy_does_not() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("state.sqlite");
+    let ids = three_long(&path);
+    let mut conn = db::open_state(&path).unwrap();
+    attach(&mut conn, "/w", "s1", 3, 500, |_| Ok(())).unwrap().unwrap();
+    assert_eq!(sent_turns_of(&path), vec![Some(3), Some(3), None]);
+    CommentStore::open(&path).unwrap().mark_sent(&[ids[2]], "copy", 600).unwrap();
+    assert_eq!(sent_turns_of(&path), vec![Some(3), Some(3), None]);
+}
+
+#[test]
+fn resend_then_attach_gets_new_turn() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("state.sqlite");
+    let ids = three_long(&path);
+    let mut conn = db::open_state(&path).unwrap();
+    attach(&mut conn, "/w", "s1", 1, 100, |_| Ok(())).unwrap().unwrap();
+    let store = CommentStore::open(&path).unwrap();
+    store.resolve(ids[0], 200).unwrap();
+    store.resend(ids[0], 300).unwrap();
+
+    let r = attach(&mut conn, "/w", "s2", 7, 400, |_| Ok(())).unwrap().unwrap();
+    assert_eq!(r.included, vec![ids[0], ids[2]]);
+    let first = store.list("/w").unwrap().into_iter().find(|c| c.id == ids[0]).unwrap();
+    assert_eq!(
+        (first.sent_to.as_deref(), first.sent_turn, first.sent_at, first.resolved_at),
+        (Some("s2"), Some(7), Some(400), None)
+    );
 }

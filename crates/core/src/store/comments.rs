@@ -13,6 +13,9 @@ use crate::worktree::now_ms;
 const MAX_BODY_CHARS: usize = 4000;
 const MAX_SNIPPET_CHARS: usize = 500;
 
+/// "마크다운으로 복사"로 보낸 코멘트의 `sent_to`. 어느 세션에 붙였는지 모른다
+pub const SENT_TO_COPY: &str = "copy";
+
 const COLUMNS: &str = "id, worktree, path, side, line, view, snippet, body, created_at, updated_at, sent_at, sent_to, \
                        sent_turn, resolved_at";
 

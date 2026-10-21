@@ -1,7 +1,13 @@
 //! 리뷰 코멘트 → Claude에게 붙일 markdown 텍스트. hook(`attach`)과 앱("마크다운으로 복사")이 같은 `render`를 쓴다.
+//! 전송된 코멘트에 Claude의 응답(turn)을 잇는 `reply_turns`도 여기 있다.
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
 use rusqlite::{Connection, TransactionBehavior};
 
-use crate::store::comments::{unsent_in, Comment, Side};
+use crate::session::list::touched_turns;
+use crate::session::SessionDir;
+use crate::store::comments::{unsent_in, Comment, Side, SENT_TO_COPY};
 use crate::store::StoreError;
 
 /// 첨부 텍스트 길이 상한 (글자 수, byte 아님)
@@ -62,12 +68,14 @@ pub fn system_message(included: usize, remaining: usize) -> String {
 }
 
 /// hook의 첨부. worktree의 미전송 코멘트를 transaction 안에서 읽고, `emit`이 성공한 뒤에만
-/// 들어간 코멘트를 `sent_to = session_id`로 바꾼다. 미전송이 없으면 `emit`을 부르지 않고 `None`.
-/// `emit`이 실패하면 아무것도 바꾸지 않는다. 출력 뒤에 commit하므로 commit이 실패하면 다음에 다시 붙는다 (중복이 유실보다 낫다)
+/// 들어간 코멘트를 `sent_to = session_id`, `sent_turn = turn`(이 prompt가 여는 turn)으로 바꾼다.
+/// 미전송이 없으면 `emit`을 부르지 않고 `None`. `emit`이 실패하면 아무것도 바꾸지 않는다.
+/// 출력 뒤에 commit하므로 commit이 실패하면 다음에 다시 붙는다 (중복이 유실보다 낫다)
 pub fn attach(
     conn: &mut Connection,
     worktree: &str,
     session_id: &str,
+    turn: u32,
     now: u64,
     emit: impl FnOnce(&Rendered) -> std::io::Result<()>,
 ) -> Result<Option<Rendered>, StoreError> {
@@ -79,13 +87,44 @@ pub fn attach(
     let rendered = render(worktree, &unsent, Some(ATTACH_CAP));
     emit(&rendered).map_err(StoreError::Emit)?;
     {
-        let mut stmt = tx.prepare("UPDATE comments SET sent_at = ?2, sent_to = ?3 WHERE id = ?1")?;
+        let mut stmt = tx.prepare("UPDATE comments SET sent_at = ?2, sent_to = ?3, sent_turn = ?4 WHERE id = ?1")?;
         for id in &rendered.included {
-            stmt.execute(rusqlite::params![id, now as i64, session_id])?;
+            stmt.execute(rusqlite::params![id, now as i64, session_id, turn])?;
         }
     }
     tx.commit()?;
     Ok(Some(rendered))
+}
+
+/// 코멘트별 "응답 turn": `sent_to` 세션의 Edit·Bash event 중 `turn >= sent_turn`이고 이 worktree의 그 path를
+/// 건드린 가장 큰 turn. 복사로 보낸 것, `sent_turn`이 없는 것, 세션 폴더가 없거나 id가 잘못된 것은 빠진다.
+/// 세션마다 event를 한 번만 읽는다
+pub fn reply_turns(
+    data_dir: &Path,
+    worktree_root: &Path,
+    all_roots: &[PathBuf],
+    comments: &[Comment],
+) -> HashMap<i64, u32> {
+    let mut by_session: HashMap<&str, Vec<&Comment>> = HashMap::new();
+    for c in comments {
+        if let (Some(session), Some(_)) = (c.sent_to.as_deref(), c.sent_turn) {
+            if session != SENT_TO_COPY {
+                by_session.entry(session).or_default().push(c);
+            }
+        }
+    }
+    let mut out = HashMap::new();
+    for (session, comments) in by_session {
+        let Some(dir) = SessionDir::open(data_dir, session) else { continue };
+        let turns = touched_turns(&dir, worktree_root, all_roots);
+        for c in comments {
+            let Some(sent_turn) = c.sent_turn else { continue };
+            if let Some(turn) = turns.get(&c.path).and_then(|t| t.range(sent_turn..).next_back()) {
+                out.insert(c.id, *turn);
+            }
+        }
+    }
+    out
 }
 
 /// 코멘트 하나. 번호 뒤부터 (`path:line`, fence된 snippet, body)
