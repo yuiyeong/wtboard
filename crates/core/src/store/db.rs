@@ -5,10 +5,6 @@ use rusqlite::{Connection, OpenFlags};
 
 use super::StoreError;
 
-/// `state.sqlite` schema version (`PRAGMA user_version`). 0은 3단계의 `viewed`만 있는 파일,
-/// 1은 5단계(`comments`, `settings`), 2는 6단계(`comments.sent_turn`, `comments.resolved_at`)
-pub const SCHEMA_VERSION: i32 = 2;
-
 /// 앱의 busy timeout. hook은 `open_existing`에 더 짧은 값을 넘긴다
 const APP_BUSY: Duration = Duration::from_secs(5);
 
@@ -46,8 +42,12 @@ ALTER TABLE comments ADD COLUMN resolved_at INTEGER;
 PRAGMA user_version = 2;
 COMMIT;";
 
-/// `MIGRATIONS[n]`은 version n → n+1
-const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [MIGRATE_V1, MIGRATE_V2];
+/// `MIGRATIONS[n]`은 version n → n+1. 0은 3단계의 `viewed`만 있는 파일, 1은 5단계(`comments`, `settings`),
+/// 2는 6단계(`comments.sent_turn`, `comments.resolved_at`)
+const MIGRATIONS: &[&str] = &[MIGRATE_V1, MIGRATE_V2];
+
+/// `state.sqlite` schema version (`PRAGMA user_version`). migration을 더하면 같이 오른다
+pub const SCHEMA_VERSION: i32 = MIGRATIONS.len() as i32;
 
 /// 앱이 `state.sqlite`를 연다. 부모 폴더와 파일을 만들고, WAL로 바꾸고, schema를 최신으로 올린다.
 /// 이 앱보다 새 version이면 `NewerSchema`

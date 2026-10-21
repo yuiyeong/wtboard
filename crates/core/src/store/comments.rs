@@ -114,6 +114,11 @@ fn get(conn: &Connection, id: i64) -> rusqlite::Result<Option<Comment>> {
     conn.query_row(&format!("SELECT {COLUMNS} FROM comments WHERE id = ?1"), params![id], from_row).optional()
 }
 
+/// 없으면 `NotFound`
+fn fetch(conn: &Connection, id: i64) -> Result<Comment, StoreError> {
+    get(conn, id)?.ok_or(StoreError::NotFound(id))
+}
+
 /// worktree의 미전송 코멘트를 `path, line, id` 순으로 읽는다. 첨부(`review::attach`)도 이 순서를 쓴다
 pub(crate) fn unsent_in(conn: &Connection, worktree: &str) -> rusqlite::Result<Vec<Comment>> {
     let mut stmt = conn.prepare(&format!(
@@ -171,11 +176,11 @@ impl CommentStore {
             "UPDATE comments SET body = ?2, updated_at = ?3 WHERE id = ?1 AND sent_at IS NULL",
             params![id, body, now_ms() as i64],
         )?;
-        match (changed, get(&conn, id)?) {
-            (0, Some(_)) => Err(StoreError::AlreadySent),
-            (_, Some(comment)) => Ok(comment),
-            (_, None) => Err(StoreError::NotFound(id)),
+        let comment = fetch(&conn, id)?;
+        if changed == 0 {
+            return Err(StoreError::AlreadySent);
         }
+        Ok(comment)
     }
 
     /// 전송된 코멘트만 해결됨으로 바꾼다. 이미 해결됨이면 그대로 둔다
@@ -185,18 +190,18 @@ impl CommentStore {
             "UPDATE comments SET resolved_at = ?2 WHERE id = ?1 AND sent_at IS NOT NULL AND resolved_at IS NULL",
             params![id, now as i64],
         )?;
-        match get(&conn, id)? {
-            Some(c) if c.sent_at.is_none() => Err(StoreError::NotSent),
-            Some(c) => Ok(c),
-            None => Err(StoreError::NotFound(id)),
+        let comment = fetch(&conn, id)?;
+        if comment.sent_at.is_none() {
+            return Err(StoreError::NotSent);
         }
+        Ok(comment)
     }
 
     /// 해결됨을 되돌린다. 해결되지 않은 것이면 그대로
     pub fn unresolve(&self, id: i64) -> Result<Comment, StoreError> {
         let conn = self.conn.lock().unwrap();
         conn.execute("UPDATE comments SET resolved_at = NULL WHERE id = ?1", params![id])?;
-        get(&conn, id)?.ok_or(StoreError::NotFound(id))
+        fetch(&conn, id)
     }
 
     /// 전송된 코멘트를 미전송으로 되돌린다 (다음 prompt에 다시 붙는다). 이미 미전송이면 그대로
@@ -207,7 +212,7 @@ impl CommentStore {
              WHERE id = ?1 AND sent_at IS NOT NULL",
             params![id, now as i64],
         )?;
-        get(&conn, id)?.ok_or(StoreError::NotFound(id))
+        fetch(&conn, id)
     }
 
     /// 이미 없어도 오류가 아니다
