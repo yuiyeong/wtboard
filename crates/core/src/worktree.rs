@@ -10,7 +10,7 @@ use crate::gh::Gh;
 use crate::git::attrs::linguist_generated;
 use crate::git::base::{merge_base, remote_branch, resolve_base, Base, BaseError, BaseSource};
 use crate::git::changes::list_changes;
-use crate::git::patch::file_patch;
+use crate::git::patch::{display_patch, file_patch};
 use crate::git::{Git, GitError};
 use crate::profile::Profile;
 use crate::store::viewed::ViewedStore;
@@ -347,7 +347,7 @@ impl Worktree {
     pub fn patch(&self, path: &str) -> Result<FilePatch, WorktreeError> {
         let mut st = self.state.lock().unwrap();
         let file = st.files.get(path).cloned().ok_or_else(|| WorktreeError::UnknownFile(path.to_owned()))?;
-        let patch = file_patch(&self.git, &st.merge_base, &file)?;
+        let patch = display_patch(&self.git, &st.merge_base, &file)?;
         st.hashes.insert(path.to_owned(), patch.hash.clone());
         Ok(patch)
     }

@@ -3,7 +3,7 @@ mod common;
 use common::TestRepo;
 use wtboard_core::domain::{FilePatch, PatchBody, MAX_DIFF_BYTES};
 use wtboard_core::git::changes::list_changes;
-use wtboard_core::git::patch::{file_patch, no_index_numstat, no_index_patch};
+use wtboard_core::git::patch::{display_patch, file_patch, no_index_numstat, no_index_patch};
 use wtboard_core::git::Git;
 
 fn patch_for(repo: &TestRepo, mb: &str, path: &str) -> FilePatch {
@@ -148,6 +148,7 @@ fn no_index_patch_relabels_header_to_worktree_path() {
     assert!(!d.contains(other.path().file_name().unwrap().to_str().unwrap()), "{d}");
     assert_eq!(p.hash, blake3::hash(d.as_bytes()).to_hex().to_string());
     assert_eq!(old_source(&p).as_deref(), Some("a\nb\n"));
+    assert_eq!(old_source(&no_index_patch(&git, "dir/x y.sh", Some(&before), None).unwrap()), None);
     assert_eq!(no_index_numstat(&git, Some(&before), Some(&after)).unwrap(), (Some(1), Some(1)));
 }
 
@@ -193,21 +194,25 @@ fn old_source(p: &FilePatch) -> Option<String> {
 
 /// 화면은 hunk 밖의 줄도 보고 하이라이팅해야 한다 (hunk 밖의 `"""`가 빠지면 string 안팎이 뒤집힌다)
 #[test]
-fn text_patch_carries_whole_old_source() {
+fn display_patch_carries_whole_old_source() {
     let repo = TestRepo::new();
     let mb = repo.head();
     repo.write("a.py", "def f():\n    \"\"\"doc\n    \"\"\"\n    return 1\n");
     repo.commit_all("add");
     let mb2 = repo.head();
     repo.write("a.py", "def f():\n    \"\"\"doc\n    \"\"\"\n    return 2\n");
-    assert_eq!(
-        old_source(&patch_for(&repo, &mb2, "a.py")).as_deref(),
-        Some("def f():\n    \"\"\"doc\n    \"\"\"\n    return 1\n")
-    );
-    // base에 없던 파일은 old가 없다 (hunk에 파일 전체가 들어 있다)
-    assert_eq!(old_source(&patch_for(&repo, &mb, "a.py")), None);
+    let display = |mb: &str, path: &str| {
+        let git = Git::new(repo.path());
+        let file = list_changes(&git, mb, &[path]).unwrap().into_iter().next().expect("file should be changed");
+        old_source(&display_patch(&git, mb, &file).unwrap())
+    };
+    assert_eq!(display(&mb2, "a.py").as_deref(), Some("def f():\n    \"\"\"doc\n    \"\"\"\n    return 1\n"));
+    // hash만 쓰는 file_patch는 old를 읽지 않는다
+    assert_eq!(old_source(&patch_for(&repo, &mb2, "a.py")), None);
+    // 새 파일은 old가 없고, 지운 파일은 diff에 old 전체가 들어 있다
+    assert_eq!(display(&mb, "a.py"), None);
     repo.write("new.py", "x = 1\n");
-    assert_eq!(old_source(&patch_for(&repo, &mb, "new.py")), None);
+    assert_eq!(display(&mb, "new.py"), None);
     repo.remove("README.md");
-    assert_eq!(old_source(&patch_for(&repo, &mb, "README.md")).as_deref(), Some("hello\n"));
+    assert_eq!(display(&mb, "README.md"), None);
 }

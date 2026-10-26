@@ -37,25 +37,32 @@ pub fn file_patch(git: &Git, merge_base: &str, file: &ChangedFile) -> Result<Fil
         args.extend([merge_base, "--", file.path.as_str()]);
         git.run(&args)?
     };
-    let old_source = match file.status {
-        FileStatus::Added | FileStatus::Untracked => None,
-        FileStatus::Modified | FileStatus::Deleted => {
-            git.run(&["cat-file", "blob", &format!("{merge_base}:{}", file.path)]).ok()
-        }
-    };
     Ok(FilePatch {
         path: file.path.clone(),
         hash: blake3::hash(&diff).to_hex().to_string(),
-        body: text_body(&diff, old_source),
+        body: text_body(&diff, None),
     })
+}
+
+/// 화면에 보일 patch: `file_patch`에 old 쪽 파일 전체(`old_source`)를 더한다. hash만 필요하면 `file_patch`를 쓴다.
+/// 새 파일은 old가 없고, 지운 파일은 diff에 old 전체가 이미 들어 있어서 수정된 파일만 읽는다
+pub fn display_patch(git: &Git, merge_base: &str, file: &ChangedFile) -> Result<FilePatch, GitError> {
+    let mut patch = file_patch(git, merge_base, file)?;
+    if let PatchBody::Text { old_source, .. } = &mut patch.body {
+        if file.status == FileStatus::Modified {
+            *old_source = git.run(&["cat-file", "blob", &format!("{merge_base}:{}", file.path)]).ok().map(lossy);
+        }
+    }
+    Ok(patch)
 }
 
 /// hash는 diff로만 만든다. `old_source`는 diff에서 정해지는 값이 아니라 표시용이다
 fn text_body(diff: &[u8], old_source: Option<Vec<u8>>) -> PatchBody {
-    PatchBody::Text {
-        diff: String::from_utf8_lossy(diff).into_owned(),
-        old_source: old_source.map(|b| String::from_utf8_lossy(&b).into_owned()),
-    }
+    PatchBody::Text { diff: String::from_utf8_lossy(diff).into_owned(), old_source: old_source.map(lossy) }
+}
+
+fn lossy(bytes: Vec<u8>) -> String {
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 fn is_symlink(path: &Path) -> bool {
@@ -122,7 +129,8 @@ pub fn no_index_patch(
     Ok(FilePatch {
         path: rel.to_owned(),
         hash: blake3::hash(&diff).to_hex().to_string(),
-        body: text_body(&diff, before.and_then(|p| fs::read(p).ok())),
+        // 지운 파일은 diff에 old 전체가 들어 있다
+        body: text_body(&diff, before.filter(|_| after.is_some()).and_then(|p| fs::read(p).ok())),
     })
 }
 

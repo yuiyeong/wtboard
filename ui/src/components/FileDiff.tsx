@@ -135,7 +135,7 @@ interface PatchViewProps extends CommentProps {
 }
 
 function PatchView({ body, viewType, ...props }: PatchViewProps) {
-  if (body.kind === 'text') return <TextDiff diff={body.diff} oldSource={body.oldSource} viewType={viewType} {...props} />;
+  if (body.kind === 'text') return <TextDiff {...body} viewType={viewType} {...props} />;
   const label = body.kind === 'binary' ? '바이너리 파일' : '1MB 초과 파일';
   return (
     <>
@@ -160,7 +160,7 @@ function TextDiff({
   actions,
   draft,
   draftKey,
-}: Omit<PatchViewProps, 'body'> & { diff: string; oldSource: string | null }) {
+}: Omit<PatchViewProps, 'body'> & Extract<PatchBody, { kind: 'text' }>) {
   const outdatedProps = { path, draft, draftKey, actions };
   const file = useMemo(() => parseDiff(diff)[0], [diff]);
   const tokens = useMemo(

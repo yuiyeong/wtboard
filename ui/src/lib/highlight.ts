@@ -1,5 +1,5 @@
 import refractor from 'refractor';
-import { tokenize, type HunkData } from 'react-diff-view';
+import { computeOldLineNumber, tokenize, type HunkData } from 'react-diff-view';
 
 /**
  * 하이라이팅 토큰. 모르는 언어거나 실패하면 undefined (하이라이팅 없이 렌더).
@@ -22,9 +22,8 @@ function matchesHunks(oldSource: string, hunks: HunkData[]): boolean {
   const lines = oldSource.split('\n');
   return hunks.every((hunk) =>
     hunk.changes.every((c) => {
-      if (c.type === 'insert') return true;
-      const n = c.type === 'normal' ? c.oldLineNumber : c.lineNumber;
-      return lines[n - 1] === c.content;
+      const n = computeOldLineNumber(c); // insert는 -1
+      return n < 0 || lines[n - 1] === c.content;
     }),
   );
 }
