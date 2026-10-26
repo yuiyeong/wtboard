@@ -14,7 +14,7 @@ fn patch_for(repo: &TestRepo, mb: &str, path: &str) -> FilePatch {
 
 fn text(p: &FilePatch) -> String {
     match &p.body {
-        PatchBody::Text { diff } => diff.clone(),
+        PatchBody::Text { diff, .. } => diff.clone(),
         other => panic!("expected text, got {other:?}"),
     }
 }
@@ -92,6 +92,11 @@ fn serializes_for_the_ui() {
         serde_json::to_value(&body).unwrap(),
         serde_json::json!({"kind": "tooLarge", "oldSize": 1, "newSize": null})
     );
+    let body = PatchBody::Text { diff: "d".into(), old_source: Some("o".into()) };
+    assert_eq!(
+        serde_json::to_value(&body).unwrap(),
+        serde_json::json!({"kind": "text", "diff": "d", "oldSource": "o"})
+    );
 }
 
 /// 결과가 5초 안에 오지 않으면 실패 (무한 읽기 회귀 방지)
@@ -142,6 +147,7 @@ fn no_index_patch_relabels_header_to_worktree_path() {
     assert!(!d.contains("old mode") && !d.contains("new mode"), "{d}");
     assert!(!d.contains(other.path().file_name().unwrap().to_str().unwrap()), "{d}");
     assert_eq!(p.hash, blake3::hash(d.as_bytes()).to_hex().to_string());
+    assert_eq!(old_source(&p).as_deref(), Some("a\nb\n"));
     assert_eq!(no_index_numstat(&git, Some(&before), Some(&after)).unwrap(), (Some(1), Some(1)));
 }
 
@@ -155,6 +161,7 @@ fn no_index_patch_matches_git_for_quoted_new_file() {
     let expected = git.run_allow(&["diff", "--no-color", "--no-index", "--", "/dev/null", rel], &[1]).unwrap();
     let p = no_index_patch(&git, rel, None, Some(&repo.path().join(rel))).unwrap();
     assert_eq!(text(&p), String::from_utf8(expected).unwrap());
+    assert_eq!(old_source(&p), None);
     assert_eq!(no_index_numstat(&git, None, Some(&repo.path().join(rel))).unwrap(), (Some(1), Some(0)));
 }
 
@@ -175,4 +182,32 @@ fn no_index_patch_binary_and_too_large() {
     repo.write("big.txt", "y".repeat(MAX_DIFF_BYTES as usize + 1));
     let again = no_index_patch(&git, "big.txt", Some(&bin), Some(&big)).unwrap();
     assert_ne!(p.hash, again.hash);
+}
+
+fn old_source(p: &FilePatch) -> Option<String> {
+    match &p.body {
+        PatchBody::Text { old_source, .. } => old_source.clone(),
+        other => panic!("expected text, got {other:?}"),
+    }
+}
+
+/// 화면은 hunk 밖의 줄도 보고 하이라이팅해야 한다 (hunk 밖의 `"""`가 빠지면 string 안팎이 뒤집힌다)
+#[test]
+fn text_patch_carries_whole_old_source() {
+    let repo = TestRepo::new();
+    let mb = repo.head();
+    repo.write("a.py", "def f():\n    \"\"\"doc\n    \"\"\"\n    return 1\n");
+    repo.commit_all("add");
+    let mb2 = repo.head();
+    repo.write("a.py", "def f():\n    \"\"\"doc\n    \"\"\"\n    return 2\n");
+    assert_eq!(
+        old_source(&patch_for(&repo, &mb2, "a.py")).as_deref(),
+        Some("def f():\n    \"\"\"doc\n    \"\"\"\n    return 1\n")
+    );
+    // base에 없던 파일은 old가 없다 (hunk에 파일 전체가 들어 있다)
+    assert_eq!(old_source(&patch_for(&repo, &mb, "a.py")), None);
+    repo.write("new.py", "x = 1\n");
+    assert_eq!(old_source(&patch_for(&repo, &mb, "new.py")), None);
+    repo.remove("README.md");
+    assert_eq!(old_source(&patch_for(&repo, &mb, "README.md")).as_deref(), Some("hello\n"));
 }

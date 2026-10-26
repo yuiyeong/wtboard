@@ -21,7 +21,8 @@ export interface ChangedFile {
 }
 
 export type PatchBody =
-  | { kind: 'text'; diff: string }
+  /** oldSource: old 쪽 파일 전체 (하이라이팅용). old 쪽 파일이 없으면 null */
+  | { kind: 'text'; diff: string; oldSource: string | null }
   | { kind: 'binary'; oldSize: number | null; newSize: number | null }
   | { kind: 'tooLarge'; oldSize: number | null; newSize: number | null };
 

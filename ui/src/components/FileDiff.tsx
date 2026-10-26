@@ -135,7 +135,7 @@ interface PatchViewProps extends CommentProps {
 }
 
 function PatchView({ body, viewType, ...props }: PatchViewProps) {
-  if (body.kind === 'text') return <TextDiff diff={body.diff} viewType={viewType} {...props} />;
+  if (body.kind === 'text') return <TextDiff diff={body.diff} oldSource={body.oldSource} viewType={viewType} {...props} />;
   const label = body.kind === 'binary' ? '바이너리 파일' : '1MB 초과 파일';
   return (
     <>
@@ -152,6 +152,7 @@ const NO_CHANGES: ChangeData[] = [];
 
 function TextDiff({
   diff,
+  oldSource,
   viewType,
   path,
   view,
@@ -159,10 +160,13 @@ function TextDiff({
   actions,
   draft,
   draftKey,
-}: Omit<PatchViewProps, 'body'> & { diff: string }) {
+}: Omit<PatchViewProps, 'body'> & { diff: string; oldSource: string | null }) {
   const outdatedProps = { path, draft, draftKey, actions };
   const file = useMemo(() => parseDiff(diff)[0], [diff]);
-  const tokens = useMemo(() => (file ? tokenizeHunks(file.hunks, languageForPath(path)) : undefined), [file, path]);
+  const tokens = useMemo(
+    () => (file ? tokenizeHunks(file.hunks, languageForPath(path), oldSource) : undefined),
+    [file, path, oldSource],
+  );
   const changes = useMemo(() => file?.hunks.flatMap((h) => h.changes) ?? NO_CHANGES, [file]);
   const placed = useMemo(() => placeComments(comments, changes, view), [comments, changes, view]);
   // 쓰던 입력은 change key가 아니라 줄 (side, line)과 내용으로 매번 다시 찾는다

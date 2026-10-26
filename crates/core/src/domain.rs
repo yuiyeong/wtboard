@@ -27,7 +27,8 @@ pub struct ChangedFile {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum PatchBody {
-    Text { diff: String },
+    /// `old_source`는 old 쪽 파일 전체. 화면이 hunk 밖의 줄까지 보고 하이라이팅하는 데 쓴다. old 쪽 파일이 없으면 `None`
+    Text { diff: String, old_source: Option<String> },
     Binary { old_size: Option<u64>, new_size: Option<u64> },
     TooLarge { old_size: Option<u64>, new_size: Option<u64> },
 }

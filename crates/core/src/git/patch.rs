@@ -37,11 +37,25 @@ pub fn file_patch(git: &Git, merge_base: &str, file: &ChangedFile) -> Result<Fil
         args.extend([merge_base, "--", file.path.as_str()]);
         git.run(&args)?
     };
+    let old_source = match file.status {
+        FileStatus::Added | FileStatus::Untracked => None,
+        FileStatus::Modified | FileStatus::Deleted => {
+            git.run(&["cat-file", "blob", &format!("{merge_base}:{}", file.path)]).ok()
+        }
+    };
     Ok(FilePatch {
         path: file.path.clone(),
         hash: blake3::hash(&diff).to_hex().to_string(),
-        body: PatchBody::Text { diff: String::from_utf8_lossy(&diff).into_owned() },
+        body: text_body(&diff, old_source),
     })
+}
+
+/// hash는 diff로만 만든다. `old_source`는 diff에서 정해지는 값이 아니라 표시용이다
+fn text_body(diff: &[u8], old_source: Option<Vec<u8>>) -> PatchBody {
+    PatchBody::Text {
+        diff: String::from_utf8_lossy(diff).into_owned(),
+        old_source: old_source.map(|b| String::from_utf8_lossy(&b).into_owned()),
+    }
 }
 
 fn is_symlink(path: &Path) -> bool {
@@ -108,7 +122,7 @@ pub fn no_index_patch(
     Ok(FilePatch {
         path: rel.to_owned(),
         hash: blake3::hash(&diff).to_hex().to_string(),
-        body: PatchBody::Text { diff: String::from_utf8_lossy(&diff).into_owned() },
+        body: text_body(&diff, before.and_then(|p| fs::read(p).ok())),
     })
 }
 

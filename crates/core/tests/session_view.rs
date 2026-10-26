@@ -94,7 +94,7 @@ impl Fx {
 
     fn diff(&self, view: SessionView, rel: &str) -> String {
         match patch(&self.dir, view, &self.wt, rel, &self.roots()).unwrap().body {
-            PatchBody::Text { diff } => diff,
+            PatchBody::Text { diff, .. } => diff,
             other => panic!("text가 아님: {other:?}"),
         }
     }
@@ -344,7 +344,7 @@ fn patch_headers_use_worktree_relative_path() {
     for view in [SessionView::Session, SessionView::Turn] {
         let p = patch(&fx.dir, view, &fx.wt, "src/a.py", &fx.roots()).unwrap();
         assert_eq!(p.path, "src/a.py");
-        let PatchBody::Text { diff } = p.body else { panic!("text가 아님") };
+        let PatchBody::Text { diff, .. } = p.body else { panic!("text가 아님") };
         assert!(diff.starts_with("diff --git a/src/a.py b/src/a.py\n"), "{diff}");
         assert!(diff.contains("\n--- a/src/a.py\n+++ b/src/a.py\n"), "{diff}");
         let data = fx.data.path().to_string_lossy().trim_start_matches('/').to_string();
