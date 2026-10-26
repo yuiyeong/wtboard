@@ -5,9 +5,11 @@ import { WorktreeError, WorktreeView } from './components/WorktreeView';
 import { resolveSelection } from './lib/selection';
 import { useUiStore } from './store';
 import { useWorktreeEvents } from './useWorktreeEvents';
+import { useZoom } from './useZoom';
 
 export function App() {
   useWorktreeEvents();
+  useZoom();
   const selection = useUiStore((s) => s.selection);
   const select = useUiStore((s) => s.select);
   // 앱이 레포를 여는 동안 list_repos는 기다렸다가 답한다.

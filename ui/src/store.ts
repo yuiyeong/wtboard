@@ -16,6 +16,9 @@ interface UiState {
   /** worktree별로 고른 session id */
   sessions: Record<string, string>;
   selectSession: (worktreeId: string, id: string) => void;
+  /** 화면 배율 (Cmd = / - / 0) */
+  zoom: number;
+  setZoom: (zoom: number) => void;
 }
 
 export const useUiStore = create<UiState>()(
@@ -29,6 +32,8 @@ export const useUiStore = create<UiState>()(
       setView: (worktreeId, view) => set((s) => ({ views: { ...s.views, [worktreeId]: view } })),
       sessions: {},
       selectSession: (worktreeId, id) => set((s) => ({ sessions: { ...s.sessions, [worktreeId]: id } })),
+      zoom: 1,
+      setZoom: (zoom) => set({ zoom }),
     }),
     { name: 'wtboard-ui' }, // 기본 저장소는 localStorage
   ),
