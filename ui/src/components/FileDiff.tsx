@@ -65,35 +65,35 @@ export const FileDiff = memo(function FileDiff({
   const writing = useDraftStore((s) => isWriting(s, dkey, comments));
 
   return (
-    <section ref={ref} id={fileAnchorId(file.path)} className="mb-4 rounded border border-gray-200">
+    <section ref={ref} id={fileAnchorId(file.path)} className="mb-4 rounded border border-gray-800">
       <header
-        className="sticky top-0 z-10 flex cursor-pointer items-center gap-3 border-b border-gray-200 bg-gray-50 px-3 py-2 text-sm"
+        className="sticky top-0 z-10 flex cursor-pointer items-center gap-3 border-b border-gray-800 bg-gray-900 px-3 py-2 text-sm"
         onClick={() => setOpen(!open)}
       >
-        <span className="w-3 text-xs text-gray-500">{open ? '▾' : '▸'}</span>
+        <span className="w-3 text-xs text-gray-400">{open ? '▾' : '▸'}</span>
         <span className="flex-1 truncate font-mono">{file.path}</span>
         {file.viewed === 'changed' && (
-          <span className="rounded bg-amber-100 px-1.5 text-xs text-amber-700">다시 바뀜</span>
+          <span className="rounded bg-amber-900 px-1.5 text-xs text-amber-300">다시 바뀜</span>
         )}
         {file.uncertain && (
           <span
-            className="text-xs text-gray-400"
+            className="text-xs text-gray-500"
             title="세션 전 내용을 정확히 알 수 없습니다. 세션 시작 commit 또는 빈 파일과 비교합니다"
           >
             원본 불확실
           </span>
         )}
-        {file.collapsed && !open && <span className="text-xs text-gray-400">생성 파일</span>}
-        {!open && writing && <span className="text-xs text-blue-600">작성 중</span>}
+        {file.collapsed && !open && <span className="text-xs text-gray-500">생성 파일</span>}
+        {!open && writing && <span className="text-xs text-blue-400">작성 중</span>}
         {unsent > 0 && (
-          <span className="text-xs text-blue-600" title={`미전송 코멘트 ${unsent}개`}>
+          <span className="text-xs text-blue-400" title={`미전송 코멘트 ${unsent}개`}>
             💬 {unsent}
           </span>
         )}
         <LineCounts file={file} />
         {/* 봤음은 branch view에만 있다. checkbox 클릭이 header의 접기 toggle로 번지지 않게 막는다 */}
         {view === 'branch' && (
-          <label className="flex items-center gap-1 text-xs text-gray-600" onClick={(e) => e.stopPropagation()}>
+          <label className="flex items-center gap-1 text-xs text-gray-400" onClick={(e) => e.stopPropagation()}>
             <input
               type="checkbox"
               checked={file.viewed === 'viewed'}
@@ -104,7 +104,7 @@ export const FileDiff = memo(function FileDiff({
         )}
       </header>
       {/* 다시 읽기가 실패해도 이전 diff(와 그 안에서 쓰던 글)는 그대로 두고 오류만 위에 보인다 */}
-      {open && patch.error && <p className="p-3 text-sm text-red-600">{String(patch.error)}</p>}
+      {open && patch.error && <p className="p-3 text-sm text-red-400">{String(patch.error)}</p>}
       {open &&
         (patch.data ? (
           <PatchView
@@ -141,7 +141,7 @@ function PatchView({ body, viewType, ...props }: PatchViewProps) {
     <>
       {/* 줄이 없으니 코멘트와 쓰던 글은 모두 위치가 바뀐 묶음에 보인다 */}
       <OutdatedComments {...props} outdated={props.comments} draftOutdated />
-      <p className="p-3 text-sm text-gray-500">
+      <p className="p-3 text-sm text-gray-400">
         {label} 변경됨 ({formatSize(body.oldSize)} → {formatSize(body.newSize)})
       </p>
     </>
@@ -198,7 +198,7 @@ function TextDiff({
     for (const key of keys) {
       const list = placed.byChangeKey.get(key);
       out[key] = (
-        <div className="space-y-2 bg-gray-50 px-3 py-2 font-sans">
+        <div className="space-y-2 bg-gray-900 px-3 py-2 font-sans">
           {list && <CommentThread comments={list} actions={actions} />}
           {key === draftAt && draft && (
             <DraftInput draft={draft} draftKey={draftKey} onAdd={actions.onAdd} path={path} />
@@ -213,7 +213,7 @@ function TextDiff({
     return (
       <>
         <OutdatedComments {...outdatedProps} outdated={comments} draftOutdated />
-        <p className="p-3 text-sm text-gray-500">내용 변경 없음 (빈 파일 또는 권한 변경)</p>
+        <p className="p-3 text-sm text-gray-400">내용 변경 없음 (빈 파일 또는 권한 변경)</p>
       </>
     );
   }
@@ -261,7 +261,7 @@ function DraftInput({ draft, draftKey, onAdd, path }: DraftProps) {
 /** 줄 내용과 함께 보이는 위치 표시 (`삭제된 줄 3: ...`) */
 function LineLabel({ side, line, snippet }: Anchor) {
   return (
-    <p className="mb-1 truncate font-mono text-xs text-gray-500" title={snippet}>
+    <p className="mb-1 truncate font-mono text-xs text-gray-400" title={snippet}>
       {side === 'old' ? '삭제된 줄 ' : ''}
       {line}: {snippet}
     </p>
@@ -291,8 +291,8 @@ function OutdatedComments({
   const count = outdated.length + (shown ? 1 : 0);
   if (count === 0) return null;
   return (
-    <details open className="border-b border-gray-200 bg-gray-50 px-3 py-2 text-sm">
-      <summary className="cursor-pointer text-xs text-gray-600">위치가 바뀐 코멘트 {count}개</summary>
+    <details open className="border-b border-gray-800 bg-gray-900 px-3 py-2 text-sm">
+      <summary className="cursor-pointer text-xs text-gray-400">위치가 바뀐 코멘트 {count}개</summary>
       <ul className="mt-2 space-y-3">
         {outdated.map((c) => (
           <li key={c.id}>

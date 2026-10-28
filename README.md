@@ -247,6 +247,7 @@ xattr -dr com.apple.quarantine /Applications/wtboard.app
 - **diff**: 보이는 파일만 계산한다. header 클릭으로 파일을 접고 펼친다. split / unified 전환.
 - base가 PR에서 온 것이면 header에 `(PR)`이 붙는다.
 - **확대·축소**: ⌘= (⌘+) 확대, ⌘- 축소, ⌘0 원래 크기. 10%씩, 50%~300%. 배율은 앱을 다시 띄워도 남는다.
+- 화면은 항상 다크 모드다 (macOS 화면 모드와 상관없이).
 
 ### 봤음 체크
 

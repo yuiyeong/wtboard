@@ -11,17 +11,17 @@ const STATUS_LABEL: Record<ChangedFile['status'], string> = {
 };
 
 const STATUS_COLOR: Record<ChangedFile['status'], string> = {
-  added: 'text-green-600',
-  modified: 'text-amber-600',
-  deleted: 'text-red-600',
-  untracked: 'text-green-600',
+  added: 'text-green-400',
+  modified: 'text-amber-400',
+  deleted: 'text-red-400',
+  untracked: 'text-green-400',
 };
 
 /** status 글자 앞의 봤음 표시. 미확인은 빈칸 */
 const VIEWED_MARK: Record<ChangedFile['viewed'], { mark: string; color: string }> = {
   none: { mark: '', color: '' },
-  viewed: { mark: '☑', color: 'text-gray-400' },
-  changed: { mark: '●', color: 'text-amber-600' },
+  viewed: { mark: '☑', color: 'text-gray-500' },
+  changed: { mark: '●', color: 'text-amber-400' },
 };
 
 const INDENT_PX = 14;
@@ -71,14 +71,14 @@ function Nodes({ nodes, depth, collapsed, toggle, unsent }: NodesProps) {
       return (
         <li key={f.path}>
           <button
-            className="flex w-full items-center gap-2 py-0.5 pr-3 text-left hover:bg-gray-100"
+            className="flex w-full items-center gap-2 py-0.5 pr-3 text-left hover:bg-gray-800"
             style={pad}
             title={f.path}
             onClick={() => scrollToFile(f.path)}
           >
             <span className={`w-3 shrink-0 text-xs ${viewed.color}`}>{viewed.mark}</span>
             <span className={`w-3 font-mono text-xs ${STATUS_COLOR[f.status]}`}>{STATUS_LABEL[f.status]}</span>
-            <span className={`truncate ${f.viewed === 'viewed' ? 'text-gray-400' : ''}`}>{node.name}</span>
+            <span className={`truncate ${f.viewed === 'viewed' ? 'text-gray-500' : ''}`}>{node.name}</span>
             {comments > 0 && (
               <span className="shrink-0 text-xs" title={`미전송 코멘트 ${comments}개`}>
                 💬
@@ -94,12 +94,12 @@ function Nodes({ nodes, depth, collapsed, toggle, unsent }: NodesProps) {
     return (
       <li key={node.path}>
         <button
-          className="flex w-full items-center gap-1 py-0.5 pr-3 text-left text-gray-700 hover:bg-gray-100"
+          className="flex w-full items-center gap-1 py-0.5 pr-3 text-left text-gray-300 hover:bg-gray-800"
           style={pad}
           title={node.path}
           onClick={() => toggle(node.path)}
         >
-          <span className="w-3 text-xs text-gray-400">{isCollapsed ? '▸' : '▾'}</span>
+          <span className="w-3 text-xs text-gray-500">{isCollapsed ? '▸' : '▾'}</span>
           <span className="truncate font-medium">{node.name}</span>
         </button>
         {!isCollapsed && (
@@ -113,11 +113,11 @@ function Nodes({ nodes, depth, collapsed, toggle, unsent }: NodesProps) {
 }
 
 export function LineCounts({ file }: { file: ChangedFile }) {
-  if (file.additions === null) return <span className="text-gray-400">bin</span>;
+  if (file.additions === null) return <span className="text-gray-500">bin</span>;
   return (
     <span className="shrink-0 tabular-nums text-xs">
-      <span className="text-green-600">+{file.additions}</span>{' '}
-      <span className="text-red-600">-{file.deletions}</span>
+      <span className="text-green-400">+{file.additions}</span>{' '}
+      <span className="text-red-400">-{file.deletions}</span>
     </span>
   );
 }

@@ -16,7 +16,7 @@ export function App() {
   // SessionEnd 없이 죽은 세션은 30분 뒤 비활성이 되는데 그것을 알리는 event가 없으므로 주기적으로 다시 읽는다 (●)
   const repos = useQuery({ queryKey: ['repos'], queryFn: listRepos, refetchInterval: 60_000 });
   if (repos.error) return <ErrorScreen message={String(repos.error)} />;
-  if (!repos.data) return <p className="p-4 text-gray-500">불러오는 중…</p>;
+  if (!repos.data) return <p className="p-4 text-gray-400">불러오는 중…</p>;
 
   const current = resolveSelection(repos.data.repos, selection);
   return (
@@ -28,7 +28,7 @@ export function App() {
         onSelect={select}
       />
       {!current ? (
-        <p className="p-4 text-gray-500">열 수 있는 worktree가 없습니다. 왼쪽 아래 오류를 확인하세요.</p>
+        <p className="p-4 text-gray-400">열 수 있는 worktree가 없습니다. 왼쪽 아래 오류를 확인하세요.</p>
       ) : current.worktree.error ? (
         <WorktreeError worktree={current.worktree} />
       ) : (
@@ -47,7 +47,7 @@ function ErrorScreen({ message }: { message: string }) {
   return (
     <div className="p-6">
       <h1 className="mb-2 font-bold">wtboard를 시작할 수 없습니다</h1>
-      <pre className="whitespace-pre-wrap text-sm text-red-600">{message}</pre>
+      <pre className="whitespace-pre-wrap text-sm text-red-400">{message}</pre>
     </div>
   );
 }

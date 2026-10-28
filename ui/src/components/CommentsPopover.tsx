@@ -26,7 +26,7 @@ export function CommentsPopover({ worktreeId, comments, listedPaths, autoAttach 
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const counts = useMemo(() => commentCounts(comments), [comments]);
-  const color = counts.unsent > 0 ? 'text-blue-600' : counts.replies > 0 ? 'text-amber-600' : 'text-gray-400';
+  const color = counts.unsent > 0 ? 'text-blue-400' : counts.replies > 0 ? 'text-amber-400' : 'text-gray-500';
 
   // popover 밖을 누르면 닫는다
   useEffect(() => {
@@ -40,7 +40,7 @@ export function CommentsPopover({ worktreeId, comments, listedPaths, autoAttach 
 
   return (
     <div ref={root} className="relative">
-      <button onClick={() => setOpen(!open)} className={`rounded px-1.5 py-0.5 text-xs hover:bg-gray-100 ${color}`}>
+      <button onClick={() => setOpen(!open)} className={`rounded px-1.5 py-0.5 text-xs hover:bg-gray-800 ${color}`}>
         {headerLabel(counts)}
       </button>
       {open && (
@@ -78,14 +78,14 @@ function CommentList({ worktreeId, comments, counts, listedPaths, autoAttach, on
   const rowProps = { listedPaths, onJump, resolve: resolve.mutate, unresolve: unresolve.mutate, resend: resend.mutate };
 
   return (
-    <div className="absolute top-full right-0 z-20 mt-1 w-96 rounded border border-gray-200 bg-white text-xs shadow-lg">
+    <div className="absolute top-full right-0 z-20 mt-1 w-96 rounded border border-gray-700 bg-gray-900 text-xs shadow-lg">
       {!autoAttach && (
-        <p className="border-b border-amber-100 bg-amber-50 px-3 py-2 text-amber-800">
+        <p className="border-b border-amber-900 bg-amber-950 px-3 py-2 text-amber-200">
           자동 첨부 꺼짐: 복사해서 Claude Code에 붙여 넣으세요
         </p>
       )}
       {comments.length > 0 && (
-        <div className="flex items-center gap-2 border-b border-gray-100 px-3 py-2">
+        <div className="flex items-center gap-2 border-b border-gray-800 px-3 py-2">
           {counts.unsent > 0 && (
             <button
               onClick={() => copy.mutate()}
@@ -100,16 +100,16 @@ function CommentList({ worktreeId, comments, counts, listedPaths, autoAttach, on
             <button
               onClick={() => clearSent.mutate()}
               disabled={clearSent.isPending}
-              className={`text-gray-500 ${ACTION}`}
+              className={`text-gray-400 ${ACTION}`}
             >
               전송된 코멘트 지우기
             </button>
           )}
         </div>
       )}
-      {error && <p className="border-b border-gray-100 px-3 py-2 text-red-600">{String(error)}</p>}
+      {error && <p className="border-b border-gray-800 px-3 py-2 text-red-400">{String(error)}</p>}
       {comments.length === 0 ? (
-        <p className="px-3 py-3 text-gray-500">코멘트가 없습니다</p>
+        <p className="px-3 py-3 text-gray-400">코멘트가 없습니다</p>
       ) : (
         <div className="max-h-[60vh] overflow-y-auto py-1">
           <ul>
@@ -118,8 +118,8 @@ function CommentList({ worktreeId, comments, counts, listedPaths, autoAttach, on
             ))}
           </ul>
           {resolved.length > 0 && (
-            <details className="border-t border-gray-100">
-              <summary className="cursor-pointer px-3 py-1.5 text-gray-500">해결된 코멘트 {resolved.length}개</summary>
+            <details className="border-t border-gray-800">
+              <summary className="cursor-pointer px-3 py-1.5 text-gray-400">해결된 코멘트 {resolved.length}개</summary>
               <ul>
                 {resolved.map((c) => (
                   <CommentRow key={c.id} c={c} {...rowProps} />
@@ -152,26 +152,26 @@ function CommentRow({ c, listedPaths, onJump, resolve, unresolve, resend }: RowP
     e.stopPropagation();
     mutate(c.id);
   };
-  const button = `shrink-0 text-gray-500 ${ACTION}`;
+  const button = `shrink-0 text-gray-400 ${ACTION}`;
 
   return (
-    <li onClick={() => listed && onJump(c.path)} className={`px-3 py-1.5 ${listed ? 'cursor-pointer hover:bg-gray-100' : ''}`}>
+    <li onClick={() => listed && onJump(c.path)} className={`px-3 py-1.5 ${listed ? 'cursor-pointer hover:bg-gray-800' : ''}`}>
       <span className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate font-mono text-gray-700" title={c.path}>
+        <span className="min-w-0 flex-1 truncate font-mono text-gray-300" title={c.path}>
           {c.path}:{c.line}
         </span>
         {/* 삭제된 줄의 코멘트는 옛 줄 번호라 새 줄 번호와 헷갈리지 않게 표시한다 */}
         {c.side === 'old' && (
-          <span className="shrink-0 text-gray-500" title="옛 줄 번호입니다">
+          <span className="shrink-0 text-gray-400" title="옛 줄 번호입니다">
             삭제된 줄
           </span>
         )}
-        {!listed && <span className="shrink-0 text-gray-400">목록에 없음</span>}
-        {reply && <span className="shrink-0 text-amber-700">{reply}</span>}
-        <span className={`shrink-0 ${c.sentAt === null ? 'text-blue-600' : 'text-gray-400'}`}>{statusLabel(c)}</span>
+        {!listed && <span className="shrink-0 text-gray-500">목록에 없음</span>}
+        {reply && <span className="shrink-0 text-amber-300">{reply}</span>}
+        <span className={`shrink-0 ${c.sentAt === null ? 'text-blue-400' : 'text-gray-500'}`}>{statusLabel(c)}</span>
       </span>
       <span className="flex items-center gap-2">
-        <span className={`min-w-0 flex-1 truncate ${c.sentAt === null ? 'text-gray-800' : 'text-gray-500'}`}>
+        <span className={`min-w-0 flex-1 truncate ${c.sentAt === null ? 'text-gray-200' : 'text-gray-400'}`}>
           {firstLine(c.body)}
         </span>
         {isResolved ? (

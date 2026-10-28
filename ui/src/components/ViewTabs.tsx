@@ -22,8 +22,8 @@ export function ViewTabs({ view, sessions, session, onView, onSession }: Props) 
         onClick={() => onView(v)}
         disabled={disabled}
         title={disabled ? NO_SESSION : undefined}
-        className={`rounded px-2 py-1 disabled:cursor-default disabled:text-gray-300 ${
-          view === v ? 'bg-gray-800 text-white' : 'hover:bg-gray-100'
+        className={`rounded px-2 py-1 disabled:cursor-default disabled:text-gray-600 ${
+          view === v ? 'bg-gray-600 text-white' : 'hover:bg-gray-800'
         }`}
       >
         {label}
@@ -38,7 +38,7 @@ export function ViewTabs({ view, sessions, session, onView, onSession }: Props) 
         <select
           value={session.id}
           onChange={(e) => onSession(e.target.value)}
-          className="rounded border border-gray-300 px-1 py-0.5 text-xs"
+          className="rounded border border-gray-700 px-1 py-0.5 text-xs"
         >
           {sessions.map((s) => (
             <option key={s.id} value={s.id}>

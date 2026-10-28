@@ -81,7 +81,7 @@ export function CommentInput({
   };
 
   return (
-    <div className="rounded border border-blue-300 bg-white p-2">
+    <div className="rounded border border-blue-700 bg-gray-950 p-2">
       <textarea
         ref={textarea}
         rows={3}
@@ -93,10 +93,10 @@ export function CommentInput({
           if (e.currentTarget.isConnected && focusedInput.current === focusId) focusedInput.current = null;
         }}
         onKeyDown={onKeyDown}
-        className="block w-full resize-y rounded border border-gray-300 p-1.5 text-sm focus:border-blue-400 focus:outline-none"
+        className="block w-full resize-y rounded border border-gray-700 p-1.5 text-sm focus:border-blue-500 focus:outline-none"
       />
       <div className="mt-1.5 flex items-center justify-end gap-2 text-xs">
-        <button onClick={onCancel} className="rounded border border-gray-300 px-2 py-0.5 hover:bg-gray-100">
+        <button onClick={onCancel} className="rounded border border-gray-700 px-2 py-0.5 hover:bg-gray-800">
           취소
         </button>
         <button
@@ -107,7 +107,7 @@ export function CommentInput({
           저장
         </button>
       </div>
-      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+      {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
     </div>
   );
 }
@@ -153,15 +153,15 @@ export function SavedComment({ comment, actions }: { comment: CommentItem; actio
   };
 
   return (
-    <div className={`rounded border bg-white ${unsent ? 'border-blue-300' : 'border-gray-200'}`}>
+    <div className={`rounded border bg-gray-950 ${unsent ? 'border-blue-700' : 'border-gray-800'}`}>
       <div
         className={`flex items-center gap-3 border-b px-2 py-1 text-xs ${
-          unsent ? 'border-blue-100 bg-blue-50 text-blue-700' : 'border-gray-100 bg-gray-50 text-gray-500'
+          unsent ? 'border-blue-900 bg-blue-950 text-blue-300' : 'border-gray-800 bg-gray-900 text-gray-400'
         }`}
       >
         <span className="flex-1">{statusLabel(comment)}</span>
         {reply && (
-          <button onClick={() => onOpenReply(comment, reply)} className="text-amber-700 hover:underline">
+          <button onClick={() => onOpenReply(comment, reply)} className="text-amber-300 hover:underline">
             {reply.label}
           </button>
         )}
@@ -183,8 +183,8 @@ export function SavedComment({ comment, actions }: { comment: CommentItem; actio
           삭제
         </button>
       </div>
-      <p className={`px-2 py-1.5 text-sm whitespace-pre-wrap ${unsent ? '' : 'text-gray-500'}`}>{comment.body}</p>
-      {error && <p className="px-2 pb-1.5 text-xs text-red-600">{error}</p>}
+      <p className={`px-2 py-1.5 text-sm whitespace-pre-wrap ${unsent ? '' : 'text-gray-400'}`}>{comment.body}</p>
+      {error && <p className="px-2 pb-1.5 text-xs text-red-400">{error}</p>}
     </div>
   );
 }

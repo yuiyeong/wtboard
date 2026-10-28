@@ -1,12 +1,29 @@
 @import "tailwindcss";
 
+/* 항상 다크. color-scheme은 scrollbar·checkbox·textarea 같은 기본 control도 다크로 그리게 한다 */
+:root { color-scheme: dark; }
+body { background-color: var(--color-gray-950); color: var(--color-gray-200); }
+
 /* 코드는 파일 경로(header의 text-sm, font-mono)와 같은 크기·글꼴 */
-:root { --diff-font-family: var(--font-mono); }
+:root {
+  --diff-font-family: var(--font-mono);
+  --diff-text-color: var(--color-gray-200);
+  --diff-selection-background-color: rgba(56, 139, 253, 0.4);
+  --diff-gutter-insert-background-color: rgba(63, 185, 80, 0.3);
+  --diff-gutter-delete-background-color: rgba(248, 81, 73, 0.3);
+  --diff-gutter-selected-background-color: rgba(187, 128, 9, 0.3);
+  --diff-code-insert-background-color: rgba(46, 160, 67, 0.15);
+  --diff-code-delete-background-color: rgba(248, 81, 73, 0.1);
+  --diff-code-insert-edit-background-color: rgba(46, 160, 67, 0.4);
+  --diff-code-delete-edit-background-color: rgba(248, 81, 73, 0.4);
+  --diff-code-selected-background-color: rgba(187, 128, 9, 0.15);
+  --diff-omit-gutter-line-color: #f85149;
+}
 .diff { font-size: var(--text-sm); }
 
-.token.comment, .token.prolog { color: #6a737d; }
-.token.keyword, .token.important, .token.atrule { color: #d73a49; }
-.token.string, .token.char, .token.attr-value { color: #032f62; }
-.token.function, .token.class-name { color: #6f42c1; }
-.token.number, .token.boolean, .token.constant { color: #005cc5; }
-.token.tag, .token.selector { color: #22863a; }
+.token.comment, .token.prolog { color: #8b949e; }
+.token.keyword, .token.important, .token.atrule { color: #ff7b72; }
+.token.string, .token.char, .token.attr-value { color: #a5d6ff; }
+.token.function, .token.class-name { color: #d2a8ff; }
+.token.number, .token.boolean, .token.constant { color: #79c0ff; }
+.token.tag, .token.selector { color: #7ee787; }

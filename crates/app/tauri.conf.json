@@ -10,7 +10,7 @@
     "frontendDist": "../../ui/dist"
   },
   "app": {
-    "windows": [{ "label": "main", "title": "wtboard", "width": 1400, "height": 900 }],
+    "windows": [{ "label": "main", "title": "wtboard", "width": 1400, "height": 900, "theme": "Dark", "backgroundColor": "#030712" }],
     "security": { "csp": null }
   },
   "bundle": {
