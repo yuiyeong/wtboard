@@ -50,7 +50,7 @@ export function Sidebar({ repos, errors, selectedId, onSelect }: Props) {
                       )}
                       {!w.error && (
                         <span
-                          className={`text-xs tabular-nums ${w.unviewedFiles > 0 ? 'text-gray-200' : 'text-gray-400'}`}
+                          className={`text-xs tabular-nums ${w.unviewedFiles > 0 ? '' : 'text-gray-400'}`}
                         >
                           {countLabel(w)}
                         </span>

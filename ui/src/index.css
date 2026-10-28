@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
-/* 항상 다크. color-scheme은 scrollbar·checkbox·textarea 같은 기본 control도 다크로 그리게 한다 */
+/* 항상 다크. color-scheme은 scrollbar·checkbox·textarea 같은 기본 control도 다크로 그리게 한다.
+   body 배경을 바꾸면 crates/app/tauri.conf.json의 backgroundColor(창이 뜰 때 색)도 맞춘다 */
 :root { color-scheme: dark; }
 body { background-color: var(--color-gray-950); color: var(--color-gray-200); }
 

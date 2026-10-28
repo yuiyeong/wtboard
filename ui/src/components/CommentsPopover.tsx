@@ -171,7 +171,7 @@ function CommentRow({ c, listedPaths, onJump, resolve, unresolve, resend }: RowP
         <span className={`shrink-0 ${c.sentAt === null ? 'text-blue-400' : 'text-gray-500'}`}>{statusLabel(c)}</span>
       </span>
       <span className="flex items-center gap-2">
-        <span className={`min-w-0 flex-1 truncate ${c.sentAt === null ? 'text-gray-200' : 'text-gray-400'}`}>
+        <span className={`min-w-0 flex-1 truncate ${c.sentAt === null ? '' : 'text-gray-400'}`}>
           {firstLine(c.body)}
         </span>
         {isResolved ? (
