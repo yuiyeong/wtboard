@@ -7,7 +7,7 @@ mod theme;
 mod tray;
 mod window;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -72,11 +72,10 @@ async fn list_repos(app: AppHandle) -> Result<ReposResponse, String> {
         let reg = registry(&app)?;
         let mut repos = reg.repos();
         let active = active_roots(&data_dir(), &reg.roots(), now_ms());
-        // 코멘트 저장소는 registry와 함께 열린다. 못 읽으면 0으로 둔다
-        let unsent = app.state::<AppState>().inner().comments.get().and_then(|s| s.unsent_counts().ok());
+        let unsent = unsent_counts(&app);
         for w in repos.iter_mut().flat_map(|r| &mut r.worktrees) {
             w.active_session = active.contains(Path::new(&w.id));
-            w.unsent_comments = unsent.as_ref().and_then(|u| u.get(&w.id)).copied().unwrap_or(0);
+            w.unsent_comments = unsent.get(&w.id).copied().unwrap_or(0);
         }
         let auto_attach_comments =
             Config::load(&Config::default_path()).map_or(true, |c| c.review.auto_attach_comments);
@@ -160,6 +159,12 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
 /// 아직 여는 중이면 열릴 때까지 기다린다. blocking pool 안에서만 부른다
 fn registry(app: &AppHandle) -> Result<&Registry, String> {
     app.state::<AppState>().inner().registry.wait().as_ref().map_err(Clone::clone)
+}
+
+/// worktree id → 미전송 코멘트 수. 코멘트 저장소는 registry와 함께 열리므로 아직 없거나 못 읽으면 비어 있다 (= 0)
+fn unsent_counts(app: &AppHandle) -> HashMap<String, usize> {
+    let store = app.state::<AppState>().inner().comments.get();
+    store.and_then(|s| s.unsent_counts().ok()).unwrap_or_default()
 }
 
 /// 메뉴바를 다시 계산하게 한다. 1초에 한 번으로 모인다

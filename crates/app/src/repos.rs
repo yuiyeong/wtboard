@@ -14,7 +14,7 @@ use wtboard_core::store::config_edit::{self, abbreviate_home, update_file};
 use wtboard_core::worktree::{ChangeScope, WorktreeChanged};
 
 use crate::settings_window::SETTINGS;
-use crate::{blocking, registry, request_tray, AppState};
+use crate::{blocking, registry, request_tray, unsent_counts, AppState};
 
 /// 설정창의 한 줄 = `config.toml`의 `[[repo]]` entry 하나
 #[derive(Debug, Serialize)]
@@ -43,13 +43,7 @@ pub struct RepoEntries {
 /// registry를 기다리지 않는다 (앱이 레포를 여는 동안에도 설정창이 바로 보인다)
 #[tauri::command]
 pub async fn list_repo_entries(app: AppHandle) -> Result<RepoEntries, String> {
-    blocking(move || {
-        // 코멘트 저장소는 registry와 함께 열린다. 아직이거나 못 읽으면 0으로 둔다
-        let comments = app.state::<AppState>().inner().comments.get();
-        let unsent = comments.and_then(|s| s.unsent_counts().ok()).unwrap_or_default();
-        Ok(entries(&Config::default_path(), &unsent))
-    })
-    .await
+    blocking(move || Ok(entries(&Config::default_path(), &unsent_counts(&app)))).await
 }
 
 /// `path` = config에 적힌 문자열
