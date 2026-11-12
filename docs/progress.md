@@ -12,7 +12,8 @@
 | 4. plugin(hooks) + 이번 세션 / 마지막 응답 탭 | 완료 (2026-10-19) | `plans/2026-10-19-stage4-sessions.md` (spec: `specs/2026-10-19-stage4-sessions-design.md`) |
 | 5. 리뷰 코멘트 자동 첨부 + 메뉴바 | 완료 (2026-10-19) | `plans/2026-10-19-stage5-review-comments.md` (spec: `specs/2026-10-19-stage5-review-comments-design.md`) |
 | 6. 전송 뒤 코멘트의 생애: 다시 보내기·응답 연결·해결됨 + 옛 hook binary 경고 | 완료 (2026-10-21) | `plans/2026-10-21-stage6-comment-lifecycle.md` (spec: `specs/2026-10-21-stage6-comment-lifecycle-design.md`) |
-| 7. 미정 | 아직 없음 | "7단계 후보" 참고 |
+| 7. 설정창(theme · 레포 관리) + 창 크기 기억 | 완료 (2026-11-12) | `plans/2026-11-12-stage7-settings.md` (spec: `specs/2026-11-12-stage7-settings-design.md`) |
+| 8. 미정 | 아직 없음 | "8단계 후보" 참고 |
 
 ## 1단계 결과
 
@@ -165,7 +166,7 @@
 - 저장 직후 refetch 전에 widget이 잠깐 깜빡일 수 있다. popover의 copy/clear 오류는 다시 열어도 남는다.
 - 접근성: `+` 버튼은 keyboard로 못 누르고, popover에 aria 속성과 Esc 닫기가 없고, textarea에 label이 없다.
 - `select-worktree`가 `['repos']` cache가 생기기 전에 오면 버려진다. 앱을 띄운 직후 메뉴바에서 worktree를 고르면 반응이 없을 수 있다.
-- 메뉴바: 메뉴 갱신이 실패해도 갱신한 것으로 기록해 다음 변경까지 stale하다. `set_always_on_top`이 실패하면 check 표시가 어긋난 채 남는다. settings가 열리지 않으면(레포 없음 등) 항상 위에 저장이 조용히 빠진다. 토글이 main thread에서 SQLite에 쓴다 (busy 최대 5초).
+- 메뉴바: 메뉴 갱신이 실패해도 갱신한 것으로 기록해 다음 변경까지 stale하다. `set_always_on_top`이 실패하면 check 표시가 어긋난 채 남는다. (7단계에서 해결: 설정을 `setup`에서 registry보다 먼저 열어, 레포가 없어도 항상 위에가 저장된다.) 토글이 main thread에서 SQLite에 쓴다 (busy 최대 5초).
 - `list_repos`의 미전송 수 query가 실패하면 0으로 보인다. 깨진 `state.sqlite`는 경고를 3개(봤음, 코멘트, 설정) 띄운다.
 - hook: attach가 panic하면 turn 기록도 건너뛴다. DB 존재를 확인하기 전에 `git rev-parse`(약 6ms)를 먼저 한다.
 - `PRAGMA journal_mode = WAL`의 결과를 확인하지 않는다. 다른 연결이 DB를 잡고 있어 WAL로 바꾸지 못하면 rollback journal로 조용히 진행한다.
@@ -211,7 +212,73 @@
 - 세션 목록의 내용이 바뀌면(session event 등. 60초 refetch는 내용이 같으면 참조가 유지된다) 응답이 있는 코멘트가 하나라도 있을 때 FileDiff 전부가 다시 그려진다.
 - `prompt-submit`에서 첨부(`sent_turn = N`)는 commit됐는데 뒤이은 `write_meta`가 실패하면(disk full 등) meta는 N-1에 머물러 그 turn의 edit event가 N-1로 적히고 `응답 #N`이 잡히지 않는다 (4단계 corrupt meta 한계와 같은 부류).
 
-## 7단계 후보
+## 7단계 결과
+
+- 설정창(label `settings`, title `Settings`, 560×520 고정, 하나만)을 더했다. app menu `wtboard > Settings…`(`⌘,`)와 tray `설정…`가 연다. 기본 app menu(Edit 포함)는 그대로 두고 `Settings…`만 더했다. 닫기는 숨기기다.
+- Theme: Dark / Light. `state.sqlite` `settings`의 `theme`에 저장하고 `set_theme`이 모든 창의 native theme·배경색을 바꾼 뒤 `theme-changed`를 보낸다. 창을 만들 때 init script가 `<html data-theme>`을 정하므로 light로 저장하면 첫 frame부터 light다. light 화면은 `39f989c`의 화면을 되살렸고, component는 `<light class> dark:<dark class>`로 쓴다 (Tailwind `dark:` variant = `data-theme="dark"`).
+- 레포 관리: 설정창에서 추가(폴더 dialog, 하위 폴더 → worktree root, 이미 등록·git 아님 거절)·삭제(줄 안 확인, 미전송 코멘트 수 안내)·base 변경(`자동 (origin/…)`, remote branch, local branch). `config.toml`은 `toml_edit`로 그 entry만 고친다 (`core::store::config_edit`). `Registry::apply`가 재시작 없이 반영하고, 그대로인 레포는 다시 열지 않는다. 다시 연 worktree마다 `worktree-changed`(scope base)를 보내 파일 목록·diff를 다시 읽힌다.
+- 레포 0개(`config.toml` 없음 포함)는 오류가 아니다. main 창에 "등록된 레포가 없습니다"와 `Settings 열기`(`⌘,` 안내)가 보인다. parse에 실패하는 `config.toml`은 지금처럼 오류 화면이고 파일 경로를 보인다.
+- 창 크기 기억: main 창을 `setup`에서 만들고 `window_main`(logical rect)을 복원한다. `core::window_fit::fit`이 가장 많이 겹치는 모니터(없으면 primary)의 work area에 맞춰 줄이고 옮긴다. 사용자가 옮기거나 크기를 바꾼 뒤(0.5초 모아서, 종료 때 flush)에만 저장한다.
+- 새 command: `get_settings`, `set_theme`, `open_settings`, `list_repo_entries`, `list_base_candidates`, `add_repo`, `remove_repo`, `set_repo_base`. 새 event: `theme-changed`. 새 dependency: `toml_edit`(core), `tauri-plugin-dialog`(app). 새 환경 변수: `WTBOARD_PICK_FOLDER`(폴더 dialog 대신 그 경로, 자동 확인용).
+- 테스트: `pnpm test` = vitest 126개 + cargo 327개, `cargo test -p wtboard-hook` 56개 통과.
+- fixture(`WTBOARD_CONFIG`, `WTBOARD_PICK_FOLDER`)로 spec 완료 기준 6개를 실제 앱에서 처음부터 다시 확인했다 (2026-11-12, 외부 모니터 LG UltraFine 하나):
+  - 설정창: app menu `Settings…`로 열린다. main 창을 앞으로 올리고 다시 누르면 새 창 없이 같은 설정창(같은 window id)이 앞으로 온다. 닫은(숨긴) 뒤 다시 열어도 같은 창이다. menu item의 단축키는 accessibility 속성으로 `⌘,`임을 확인했다 (키 자체는 누르지 않았다).
+  - Theme: `Light` → main 창(배경, diff, syntax 색, title bar)과 설정창이 바로 light. 종료 뒤 다시 켜서 창이 생긴 직후부터 약 0.12초 간격 25장을 찍었고 첫 장(0.16초)부터 모두 light였다. 확인 뒤 `Dark`로 되돌렸다.
+  - 레포 0개: `config.toml` 없이 켜면 "등록된 레포가 없습니다" + `Settings 열기` → 버튼으로 설정창 → `＋ Repository 추가…`(하위 폴더 `src`를 고른 것으로) → `config.toml`이 생기고 worktree root가 적히며 sidebar에 그 레포가 나타났다.
+  - 주석 유지: 첫 줄 주석, 줄 끝 주석, `[watch]`·`[sessions]`·`[review]` 값이 있는 `config.toml`에서 base 변경 → 추가 → 삭제 뒤 원본과의 diff는 `base = "origin/main"` 한 줄과 바뀐 `[[repo]]` path 하나뿐이었다.
+  - base: `origin/HEAD`가 `origin/develop`인 레포에서 `자동 (origin/develop)` → `origin/main`(native popup, 설정창 rect 안의 option을 click) → header `← origin/main`, 변경 파일 2개 → 3개. 다른 레포의 sidebar `방금`/`1분 전` 표시(레포를 다시 열면 사라지는 값)는 base 변경 3번과 추가·삭제 뒤에도 남았다.
+  - 창 크기: `window_main`에 지금 없는 모니터 자리의 큰 rect(`x=-3500`, 3400×2000)를 넣고 켜면 창이 화면 work area(0,30,3008×1662) 안에 들어왔다. 건드리지 않고 종료하자 저장 값은 그대로였다. 창을 1200×800으로 옮기자 저장되고, 다시 켜면 그 rect로 떴다.
+
+## 7단계에서 정한 것 (spec과 다른 점)
+
+- 설정창 닫기(`⌘W`, 빨간 버튼)는 숨기기다 (main 창과 같은 `CloseRequested` 처리). 숨겨 둔 사이 손으로 고친 `config.toml`이 보이게 설정창이 focus를 받을 때마다 목록을 다시 읽는다.
+- 폴더 dialog는 설정창의 sheet로 뜬다.
+- Theme 스위치의 선택된 칸은 mockup의 blue가 아니라 main 창의 split/unified control과 같은 색(dark `bg-gray-700`, light `bg-gray-800`)이다. `Settings 열기`는 main 창의 primary action과 같은 blue, 삭제 확인의 `삭제`만 red다.
+- base 후보는 select를 처음 열 때가 아니라 목록을 읽을 때 모든 줄(열 수 있는 entry)을 미리 읽는다. native popup은 열린 동안 option이 늘어도 반영되지 않아, 키보드·accessibility로 바로 열면 `자동`만 보였다.
+- `window_main` 값은 JSON `{"x","y","width","height"}` (logical point). 위치는 title bar를 포함한 바깥 frame, 크기는 안쪽 크기다. 가로나 세로가 200 미만이면 저장 값이 없는 것으로 본다. 복원 기준(baseline)은 요청한 rect가 아니라 창을 만든 뒤 OS가 실제로 놓은 rect이고, 이것과 1pt 넘게 달라졌을 때만 저장한다. fullscreen·최소화·숨김 상태에서는 저장하지 않는다.
+- 종료 때 저장 대기 중이던 rect를 `RunEvent::ExitRequested`(tray `종료`)와 `RunEvent::Exit`(⌘Q, app menu Quit은 이것만 온다) 양쪽에서 flush한다.
+- `SettingsStore`는 main thread의 `setup`에서 연다 (busy 최대 5초). 창 크기·theme을 창보다 먼저 알아야 하기 때문이다. 열지 못하면 메모리 store(dark, 1400×900)와 sidebar 경고다.
+- app menu와 tray의 `설정…`은 같은 menu id(`settings`)를 쓴다.
+- `update_file`은 `config.toml`이 symlink면 따라가서 target을 고친다 (dotfiles 레포 등).
+- `toplevel`은 git 출력을 그대로 돌려준다 (경로 정규화는 비교하는 쪽이 한다). bare 레포와 `.git` 폴더는 `git repository가 아닙니다`다.
+- `Registry::apply`는 이번에 (다시) 연 레포의 worktree id만 돌려주고, 앱은 그 worktree에만 `worktree-changed`를 보낸다. 닫힌 레포의 감시는 마지막 참조가 사라질 때 멈춘다 (기다리지 않는다).
+- 설정창의 추가·삭제·base 변경은 앱의 `config_lock`으로 하나씩 돈다 (`config.toml` 읽기부터 registry 반영까지).
+
+## 7단계 사용자 확인
+
+자동 확인에서는 키 입력을 보내지 않았고, tray 메뉴는 System Events에 노출되지 않으며, 모니터를 뽑을 수 없었다. 아래는 사용자가 직접 확인한다.
+
+- [ ] `⌘,` 키로 설정창이 열린다 (main 창, 설정창 어느 쪽이 앞이어도).
+- [ ] `＋ Repository 추가…`의 실제 폴더 dialog: 설정창의 sheet로 뜨고, 실제 레포를 고르면 추가되고, 취소하면 아무 일도 없다.
+- [ ] home 아래의 실제 레포를 추가하면 `config.toml`에 `~/…`로 적힌다.
+- [ ] 레포를 추가·삭제한 뒤 메뉴바(tray) 메뉴의 worktree 목록과 미확인 수가 바뀐다.
+- [ ] tray `설정…`가 설정창을 연다.
+- [ ] tray `항상 위에 띄우기` 토글이 동작하고 재시작 뒤에도 유지된다.
+- [ ] tray `종료`로 끝냈을 때도 직전에 옮긴 창 rect가 저장된다.
+- [ ] 외부 모니터에서 창을 크게 키우고 종료 → 모니터 없이(MacBook만) 실행 → 창이 화면 안에 들어온다 → 그대로 종료 → 모니터 연결 뒤 실행 → 원래의 큰 크기로 돌아온다.
+- [ ] 설정창에서 `⌘C`/`⌘V`, main 창에서 `⌘=`/`⌘-`/`⌘0`이 그대로 동작한다 (app menu를 직접 구성했으므로).
+- [ ] light theme에서 쓰는 중인 코멘트(draft) widget, `다시 바뀜` badge, 빨간 오류 상태(봤음 저장 실패 등)의 색 (키 입력이 필요해 light screenshot으로 보지 못했다).
+
+## 7단계 알려진 한계
+
+- 레포를 삭제해도 hook은 등록 여부를 보지 않고 cwd의 worktree root로 미전송 코멘트를 찾으므로, 그 worktree에서 보낸 prompt에 미전송 코멘트가 계속 붙는다 (삭제 확인 줄이 `미전송 코멘트 n개가 남습니다`로 알린다).
+- 앱이 켜져 있는 동안 `config.toml`을 바깥에서 고친 것은 감시하지 않는다. 다시 시작해야 반영된다. 설정창의 동작은 매번 파일을 새로 읽으므로 그 내용을 덮어쓰지는 않지만, 그 동작의 `apply`가 바깥에서 고친 `[[repo]]`도 같이 반영한다. 이때 그대로 둔 레포는 `[watch] fallback_poll_secs` 변경을 반영하지 않는다.
+- 시작 때 `config.toml` parse에 실패해 오류 화면인 상태에서 손으로 고친 뒤 설정창에서 바꾸면, 파일은 쓰이지만 main 창은 옛 parse 오류를 계속 보인다. 앱을 다시 시작해야 한다.
+- 레포가 등록돼 있지만 하나도 열지 못하면(모두 경로 없음 등) main 창이 "등록된 레포가 없습니다"를 보인다 (sidebar 아래에는 entry 오류가 보인다).
+- main 창을 옮기거나 크기를 바꾸고 0.5초 안에 닫으면(숨기기) 그 rect가 저장되지 않는다.
+- `config.toml` 쓰기:
+  - 파일 끝의 주석(예: 주석 처리한 `[[repo]]` block)이 있으면 새 `[[repo]]`가 그 주석 위에 들어가 주석이 새 entry 아래로 간다.
+  - entry를 지우면 그 entry 앞의 주석이 다음 table 위로 옮겨 간다. 마지막 entry를 지우면 파일 끝에 남는다.
+  - rename 전에 fsync하지 않는다 (crash 때 빈 파일이 남을 수 있다). crash 때 `config.toml.tmp<pid>`가 남을 수 있다. 가리키는 곳이 없는 symlink는 일반 파일로 바뀐다. 파일 권한은 새 파일 기본값(0644)이 된다.
+  - `repo = [{ path = "…" }]` inline 형식으로 쓴 파일에서는 추가·삭제·base 변경이 `설정 파일에 없는 레포` 오류다.
+  - 같은 `path`의 entry가 둘이면 첫 번째만 고치고, 설정창 목록의 React key가 겹친다.
+- `Registry::apply` 중 panic이 나면 이후 설정창의 추가·삭제·base 변경이 모두 실패한다 (lock poison). `apply` 직후 잠깐 `list_repos`가 새 레포 목록과 옛 entry 오류를 같이 볼 수 있다 (다음 갱신에 맞춰진다).
+- `worktrees-updated`마다 설정창이 숨어 있어도 목록과 base 후보를 다시 읽는다.
+- 창 rect 맞추기는 안쪽 크기 기준이다. title bar 높이만큼 바깥 frame이 work area를 넘지 않는 것은 지금 창 설정에서 확인했다 (decoration을 바꾸면 다시 봐야 한다).
+
+## 8단계 후보
+
+- 7단계 spec 범위 밖에 둔 것: macOS appearance를 따르는 theme, `[watch]`·`[sessions]`·`[review]`·항상 위에를 설정창으로, 앱이 켜진 동안 `config.toml` 바깥 편집 감시, 레포 목록 순서 바꾸기, 설정창의 크기·위치와 fullscreen·maximize 기억.
 
 - spec 범위 밖에 둔 것: 여러 줄 범위 코멘트, 파일 단위 코멘트, 답글(thread), 줄 단위 응답 판정, 알림(notification center).
 - hook binary를 앱 번들에 포함하고 설치를 앱에서 안내 (감지·경고는 6단계에서 했다).

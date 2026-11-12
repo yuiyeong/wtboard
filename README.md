@@ -5,7 +5,7 @@
 diff 줄에 단 리뷰 코멘트를 그 worktree의 Claude Code 다음 prompt에 자동으로 첨부한다.
 
 - 서버 없음. 앱 프로세스가 직접 `git`을 실행하고 파일을 감시한다.
-- 앱은 레포에 아무것도 쓰지 않는다. Claude Code의 git 작업과 충돌하지 않는다.
+- 앱은 레포에 아무것도 쓰지 않는다. Claude Code의 git 작업과 충돌하지 않는다. 앱이 쓰는 사용자 파일은 설정창에서 레포를 추가·삭제·base 변경할 때의 `config.toml`뿐이다.
 - Claude Code plugin(hooks)이 세션별 변경 기록을 남겨 "이번 세션" / "마지막 응답" 뷰를 만든다.
 
 설계 전체는 `docs/draft.md`, 진행 상황은 `docs/progress.md`에 있다.
@@ -15,8 +15,8 @@ diff 줄에 단 리뷰 코멘트를 그 worktree의 Claude Code 다음 prompt에
 | 영역 | 선택 | 비고 |
 |---|---|---|
 | 앱 shell | [Tauri 2](https://tauri.app) | Rust core + webview UI. 상시 띄워 두는 앱이라 가볍게 |
-| core (`crates/core`) | Rust 2021 | git CLI 래퍼, diff hash(`blake3`), 파일 감시(`notify` + FSEvents), SQLite(`rusqlite` bundled), config(`toml`) |
-| 앱 (`crates/app`) | Tauri command / event, tray(메뉴바) | `tray-icon` feature |
+| core (`crates/core`) | Rust 2021 | git CLI 래퍼, diff hash(`blake3`), 파일 감시(`notify` + FSEvents), SQLite(`rusqlite` bundled), config(`toml`, 주석을 유지하며 고치는 `toml_edit`) |
+| 앱 (`crates/app`) | Tauri command / event, tray(메뉴바), 설정창 | `tray-icon` feature, `tauri-plugin-dialog`(폴더 선택) |
 | hook (`crates/hook`) | `wtboard-hook` binary | Claude Code hook이 호출. 세션 기록을 `~/.wtboard/sessions/`에 쓴다 |
 | UI (`ui/`) | React 19, TypeScript, Vite, Tailwind CSS 4 | |
 | UI 상태·데이터 | TanStack Query 5, zustand | |
@@ -29,8 +29,8 @@ diff 줄에 단 리뷰 코멘트를 그 worktree의 Claude Code 다음 prompt에
 
 ```
 ~/.wtboard/
-├─ config.toml               # 감시할 레포 목록과 설정
-├─ state.sqlite              # 봤음 상태, 리뷰 코멘트, 앱 설정
+├─ config.toml               # 감시할 레포 목록과 설정 (설정창도 레포 목록을 고친다)
+├─ state.sqlite              # 봤음 상태, 리뷰 코멘트, 앱 설정(theme, 창 크기·위치, 항상 위에)
 ├─ bin/wtboard-hook          # scripts/install-hook.sh가 설치하는 hook binary
 └─ sessions/<session_id>/    # Claude Code 세션별 변경 기록 (hook이 쓴다)
 ```
@@ -57,10 +57,15 @@ pnpm install               # root(@tauri-apps/cli)와 ui/ 둘 다 설치된다
 
 Rust crate는 첫 `pnpm tauri dev` / `cargo build`에서 받는다.
 
-### `~/.wtboard/config.toml` 작성
+### 레포 등록
 
-감시할 레포를 `[[repo]]`로 하나씩 등록한다. 레포 하나를 등록하면 그 레포의 모든 worktree를 자동으로 찾는다
+레포 하나를 등록하면 그 레포의 모든 worktree를 자동으로 찾는다
 (`git worktree list` 기준이라 worktree를 어디에 만들었든 잡힌다). 등록한 경로가 worktree여도 된다.
+
+기본은 앱의 설정창이다 ("사용하는 법 > 설정창"). 앱을 처음 켜면 "등록된 레포가 없습니다"와 `Settings 열기` 버튼이 보이고,
+설정창의 `＋ Repository 추가…`로 폴더를 고르면 `~/.wtboard/config.toml`이 만들어지고 sidebar에 그 레포가 바로 나타난다.
+
+`config.toml`을 직접 써도 된다. 감시할 레포를 `[[repo]]`로 하나씩 적는다.
 
 ```toml
 [[repo]]
@@ -81,6 +86,10 @@ auto_attach_comments = true    # false면 hook이 리뷰 코멘트를 prompt에 
 ```
 
 `WTBOARD_CONFIG=<path>` 환경 변수로 config 파일 위치를 바꿀 수 있다. `state.sqlite`와 `sessions/`는 그 config 파일 옆에 만들어진다.
+
+앱이 켜져 있는 동안 `config.toml`을 손으로 고치면 앱을 다시 켜야 반영된다 (설정창에서 한 변경은 바로 반영된다).
+설정창은 동작할 때마다 파일을 새로 읽고 그 `[[repo]]` entry만 고치므로, 손으로 쓴 주석과 `[watch]`·`[sessions]`·`[review]` 값은 그대로 남는다.
+형식이 깨진(parse에 실패하는) 파일에는 쓰지 않는다. 그때는 설정창에 오류와 파일 경로가 보이고, 손으로 고쳐야 한다.
 
 프로젝트 종류(profile)는 worktree root 파일로 자동 판별한다. profile은 감시에서 뺄 폴더와 "접힌 파일"(생성·lock 파일)을 정한다.
 
@@ -163,6 +172,7 @@ pnpm tauri build             # 배포용 .app / .dmg → target/release/bundle/
 | `WTBOARD_CONFIG` | config.toml 경로 (기본 `~/.wtboard/config.toml`). 데이터 폴더도 이 파일 옆이다 |
 | `WTBOARD_HOOK_BIN` | hook binary 경로 (기본 `~/.wtboard/bin/wtboard-hook`) |
 | `WTBOARD_SLOW_LIST_MS` | 변경 목록 계산이 이 시간(ms)을 넘으면 fsmonitor 안내 banner (기본 500) |
+| `WTBOARD_PICK_FOLDER` | 설정창의 `＋ Repository 추가…`가 폴더 dialog를 띄우지 않고 이 경로를 고른 것으로 한다 (실제 앱 자동 확인용) |
 
 ## 배포하는 법
 
@@ -205,7 +215,7 @@ plugin은 한 번 설치하면 그대로 두고, hook binary는 코드가 바뀔
 
 ### 4. 설정
 
-`~/.wtboard/config.toml`을 쓴다 ("환경 설정" 참고). Finder에서 띄운 앱은 PATH에 Homebrew 경로가 없지만, `gh`는 `/opt/homebrew/bin`과 `/usr/local/bin`을 직접 찾아보므로 그대로 동작한다.
+앱을 띄우고 설정창(`⌘,`)에서 레포를 추가한다. `~/.wtboard/config.toml`을 직접 써도 된다 ("환경 설정 > 레포 등록" 참고). Finder에서 띄운 앱은 PATH에 Homebrew 경로가 없지만, `gh`는 `/opt/homebrew/bin`과 `/usr/local/bin`을 직접 찾아보므로 그대로 동작한다.
 
 ### 다른 Mac에 보내기
 
@@ -247,7 +257,33 @@ xattr -dr com.apple.quarantine /Applications/wtboard.app
 - **diff**: 보이는 파일만 계산한다. header 클릭으로 파일을 접고 펼친다. split / unified 전환.
 - base가 PR에서 온 것이면 header에 `(PR)`이 붙는다.
 - **확대·축소**: ⌘= (⌘+) 확대, ⌘- 축소, ⌘0 원래 크기. 10%씩, 50%~300%. 배율은 앱을 다시 띄워도 남는다.
-- 화면은 항상 다크 모드다 (macOS 화면 모드와 상관없이).
+- 화면 색은 설정창에서 고른 theme(Dark / Light, 기본 Dark)이다. macOS 화면 모드는 따라가지 않는다.
+
+### 설정창
+
+`⌘,`, app menu `wtboard > Settings…`, 메뉴바의 `설정…` 중 어느 것으로든 연다. 창은 하나만 뜨고, 이미 열려 있으면 앞으로 온다.
+닫아도(`⌘W`, 빨간 버튼) 숨겨질 뿐이다. main 창이 숨어 있어도 설정창만 뜬다.
+
+```
+Theme        [ Dark | Light ]
+
+Repositories
+┌───────────────────────────────────────────────────────────────┐
+│ my-api                    base [자동 (origin/develop) ▾]  [삭제] │
+│ ~/dev/my-api                                                   │
+├───────────────────────────────────────────────────────────────┤
+│ my-web                    base [origin/main ▾]            [삭제] │
+│ ~/dev/my-web                                                   │
+└───────────────────────────────────────────────────────────────┘
+[＋ Repository 추가…]
+```
+
+- **Theme**: 누르는 즉시 열린 모든 창(배경, diff, syntax 색, title bar)에 적용되고 저장된다. 다음 실행은 처음부터 그 theme으로 뜬다.
+- **추가**: `＋ Repository 추가…` → 폴더 선택 dialog. 레포 안의 하위 폴더를 골라도 그 worktree의 root가 등록된다. git 레포가 아니면 `git repository가 아닙니다`, 이미 등록된 레포(같은 레포의 다른 worktree 포함)면 `이미 등록된 repository입니다`가 보이고 아무것도 쓰지 않는다. home 아래 경로는 `~/…`로 적힌다. base는 묻지 않는다 (자동).
+- **base**: 줄마다 고른다. `자동`은 `base`를 적지 않는 것이고, 괄호 안이 지금 `origin/HEAD`가 가리키는 branch다 (없으면 `자동 (정할 수 없음)`, 직접 골라야 한다). 그 아래로 remote branch, local branch 순이다. `자동`이어도 PR이 있는 worktree는 PR base가 우선한다 (branch를 직접 고르면 그 branch가 PR base보다 먼저다). 고르는 즉시 저장되고 그 레포의 diff가 새 base로 다시 계산된다. 다른 레포는 다시 열리지 않는다.
+- **삭제**: 줄 안에서 `삭제할까요? [취소] [삭제]`로 한 번 확인한다. `config.toml`의 그 entry만 지운다. 레포 폴더와 그 레포의 봤음 상태·코멘트는 지우지 않으므로 다시 등록하면 돌아온다. 그 레포에 미전송 코멘트가 있으면 `미전송 코멘트 n개가 남습니다`가 같이 보인다 (Claude Code hook은 등록 여부를 보지 않으므로 그 worktree에서 보낸 prompt에는 계속 붙는다).
+- 열 수 없는 entry(경로 없음, git 레포 아님)도 이유와 함께 줄로 보인다. base는 고를 수 없고 삭제는 된다.
+- 추가·삭제·base 변경은 앱을 다시 켜지 않아도 sidebar와 메뉴바에 반영된다.
 
 ### 봤음 체크
 
@@ -277,8 +313,10 @@ header의 💬 버튼이 worktree의 코멘트 목록 popover를 연다. 여기�
 ### 메뉴바(tray)와 창
 
 - 메뉴바 아이콘에 전체 미확인 파일 수가 보인다. 메뉴에서 worktree를 바로 고를 수 있다 (진행 중 세션은 ●).
-- 창을 닫으면 종료가 아니라 숨김이다. Dock 아이콘 클릭이나 메뉴바의 `wtboard 열기`로 다시 연다. 종료는 메뉴바의 `종료`.
+- 창을 닫으면 종료가 아니라 숨김이다. Dock 아이콘 클릭이나 메뉴바의 `wtboard 열기`로 다시 연다. 종료는 메뉴바의 `종료` (또는 ⌘Q).
+- 메뉴바의 `설정…`이 설정창을 연다.
 - `항상 위에 띄우기`를 켜면 창이 다른 창 위에 머문다. 설정은 저장된다.
+- main 창의 크기와 위치를 기억해 다음 실행 때 그대로 띄운다 (설정 항목은 없다). 지금 화면보다 크면 화면의 쓸 수 있는 영역(menu bar·Dock 제외)까지 줄이고, 화면 밖이면 안으로 옮긴다. 이렇게 앱이 맞춘 크기는 저장하지 않으므로, 외부 모니터에서 크게 쓰던 창을 MacBook 화면만으로 켰다가 건드리지 않고 끄면 다음에 외부 모니터에서 다시 원래 크기로 뜬다. fullscreen 상태의 크기는 저장하지 않는다.
 
 ### 느린 레포
 
