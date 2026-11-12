@@ -24,14 +24,13 @@ pub fn remove_repo(src: &str, repo_path: &str) -> Result<String, ConfigError> {
     let index = repo_index(repos, repo_path)?;
     let removed = repos.get(index).expect("방금 찾은 index");
     let position = removed.position();
-    let prefix = removed.decor().prefix().and_then(RawString::as_str).unwrap_or("").to_string();
+    let comment = removed.decor().prefix().and_then(RawString::as_str).unwrap_or("").to_string();
     repos.remove(index);
     if repos.is_empty() {
         doc.remove("repo");
     }
     // 첫 table 앞의 주석은 그 table의 decor prefix로 들어 있어서 table과 같이 사라진다. 다음 table로 넘긴다
-    if !prefix.trim().is_empty() {
-        let comment = prefix;
+    if !comment.trim().is_empty() {
         match position.and_then(|pos| next_table_position(doc.as_table(), pos)) {
             Some(next) => {
                 let target = table_at_mut(doc.as_table_mut(), next).expect("방금 찾은 position");
