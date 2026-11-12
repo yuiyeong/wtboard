@@ -261,7 +261,6 @@ mod tests {
         assert!(err.starts_with("앱을 다시 시작해야 합니다"), "{err}");
         assert!(!path.exists());
 
-        let write = || update_file(&path, |src| config_edit::add_repo(src, "~/a")).map_err(|e| e.to_string());
         assert_eq!(when_ready(Ok::<_, String>(1), write), Ok((1, ())));
         assert_eq!(Config::load(&path).unwrap().repos[0].path, "~/a");
     }
