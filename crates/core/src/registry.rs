@@ -1,6 +1,7 @@
 //! config에 등록한 레포 전체. 열린 뒤에도 `apply`로 config에 맞춘다
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use serde::Serialize;
 
@@ -30,6 +31,8 @@ pub struct Registry {
     repos: RwLock<Vec<Opened>>,
     /// 마지막 `apply`의 entry 오류
     entry_errors: Mutex<Vec<EntryError>>,
+    /// 마지막 `apply`의 config에 적힌 `[[repo]]` 수. 열지 못한 것도 센다
+    configured: AtomicUsize,
     /// `warn`으로 붙인 경고. `apply`가 지우지 않는다
     warnings: Mutex<Vec<EntryError>>,
     /// `apply`를 하나씩만 돌린다. 레포를 여는 동안(수 초) `repos`는 잡지 않는다
@@ -79,6 +82,7 @@ impl Registry {
             sink,
             repos: RwLock::new(Vec::new()),
             entry_errors: Mutex::new(Vec::new()),
+            configured: AtomicUsize::new(0),
             warnings: Mutex::new(Vec::new()),
             apply_lock: Mutex::new(()),
         };
@@ -90,7 +94,8 @@ impl Registry {
     /// base가 바뀐 레포는 닫고 다시 연다. 실패한 entry는 `errors`에 남기고 나머지는 계속 연다.
     /// 돌려주는 것: 이번에 (다시) 연 레포의 worktree id
     pub fn apply(&self, config: &Config) -> Vec<String> {
-        let _serial = self.apply_lock.lock().unwrap();
+        // 지키는 값이 `()`라 앞 apply가 panic했어도 이어서 써도 된다
+        let _serial = self.apply_lock.lock().unwrap_or_else(PoisonError::into_inner);
         let (groups, mut errors) = group(config);
         // apply만 목록을 바꾸므로 이 복사본이 apply 동안 그대로 맞다
         let current = self.repos.read().unwrap().clone();
@@ -120,7 +125,9 @@ impl Registry {
         });
         *self.repos.write().unwrap() = next;
         *self.entry_errors.lock().unwrap() = errors;
-        // 닫힌 레포는 `current`가 마지막 Arc다. 목록 lock 밖에서 drop되며 watcher가 멈춘다
+        self.configured.store(config.repos.len(), Ordering::Relaxed);
+        // 닫힌 레포의 Arc를 목록 lock 밖에서 놓는다. 보통 이것이 마지막이라 여기서 watcher가 멈추지만,
+        // watcher callback이나 `snapshot`을 든 reader가 잠깐 더 쥐고 있으면 그쪽이 놓을 때 멈춘다
         drop(current);
         reopened
     }
@@ -156,6 +163,11 @@ impl Registry {
         let mut errors = self.entry_errors.lock().unwrap().clone();
         errors.extend(self.warnings.lock().unwrap().iter().cloned());
         errors
+    }
+
+    /// 마지막 `apply`의 config에 적힌 `[[repo]]` 수. 열린 레포가 0개일 때 "등록이 없다"와 "열지 못했다"를 가른다
+    pub fn configured_repos(&self) -> usize {
+        self.configured.load(Ordering::Relaxed)
     }
 
     /// 열 때 말고 나중에 알게 된 문제를 오류 목록 끝에 붙인다. `apply` 뒤에도 남는다

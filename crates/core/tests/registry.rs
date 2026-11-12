@@ -169,7 +169,15 @@ fn apply_closes_removed_repo() {
     assert!(opened.is_empty(), "{opened:?}");
     assert_eq!(reg.repos().len(), 1);
     assert!(reg.repo(&b_id).is_none());
-    assert!(closed.upgrade().is_none(), "닫힌 레포가 drop되지 않으면 watcher가 계속 돈다");
+    // watcher callback이 잠깐 Arc를 쥐고 있을 수 있어 조금 기다린다
+    let dropped = (0..50).any(|_| {
+        let gone = closed.upgrade().is_none();
+        if !gone {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        gone
+    });
+    assert!(dropped, "닫힌 레포가 drop되지 않으면 watcher가 계속 돈다");
     assert!(reg.worktree(&b_wts[0]).is_none());
     assert!(!reg.roots().contains(&canon(b.path())), "{:?}", reg.roots());
 }
@@ -205,6 +213,20 @@ fn apply_refreshes_entry_errors_and_keeps_warnings() {
 
     reg.apply(&config(&[(repo.path(), Some("main"))]));
     assert_eq!(reg.errors(), [x]);
+}
+
+#[test]
+fn configured_repos_counts_entries_of_the_applied_config() {
+    let repo = TestRepo::new();
+    let missing = Path::new("/nonexistent/wtboard-x");
+    let reg = registry(&[(missing, None), (Path::new("/nonexistent/wtboard-y"), None)]);
+    assert!(reg.repos().is_empty());
+    assert_eq!(reg.configured_repos(), 2);
+
+    reg.apply(&config(&[(repo.path(), Some("main"))]));
+    assert_eq!(reg.configured_repos(), 1);
+    reg.apply(&Config::parse("").unwrap());
+    assert_eq!(reg.configured_repos(), 0);
 }
 
 #[test]
