@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { Theme } from './lib/theme';
 
 export type FileStatus = 'added' | 'modified' | 'deleted' | 'untracked';
 export type Profile = 'flutter' | 'node' | 'python' | 'default';
@@ -180,3 +181,15 @@ export const unresolveComment = (id: number) => invoke<Comment>('unresolve_comme
 
 /** 전송된 코멘트를 미전송으로 되돌린다 (다음 prompt에 다시 붙는다) */
 export const resendComment = (id: number) => invoke<Comment>('resend_comment', { id });
+
+export interface Settings {
+  theme: Theme;
+}
+
+export const getSettings = () => invoke<Settings>('get_settings');
+
+/** 저장하고 모든 창에 `theme-changed`로 알린다 */
+export const setTheme = (theme: Theme) => invoke<void>('set_theme', { theme });
+
+/** 설정창을 연다 (이미 열려 있으면 앞으로) */
+export const openSettings = () => invoke<void>('open_settings');

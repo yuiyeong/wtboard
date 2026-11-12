@@ -115,9 +115,7 @@ pub fn apply_saved_on_top(window: &WebviewWindow, settings: &SettingsStore) {
 /// 창을 보이고 앞으로 가져온다 (닫기 = 숨기기라서 숨어 있을 수 있다)
 pub fn show_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(WINDOW) {
-        let _ = w.show();
-        let _ = w.unminimize();
-        let _ = w.set_focus();
+        crate::window::bring_to_front(&w);
     }
 }
 
@@ -151,6 +149,7 @@ fn menu(app: &AppHandle, m: &TrayModel, on_top: bool) -> tauri::Result<Menu<taur
         b = b.separator();
     }
     b.text("open", "wtboard 열기")
+        .text(crate::menu::SETTINGS_ID, "설정…")
         .item(&CheckMenuItemBuilder::with_id(ON_TOP_KEY, "항상 위에 띄우기").checked(on_top).build(app)?)
         .separator()
         .text("quit", "종료")
@@ -160,6 +159,7 @@ fn menu(app: &AppHandle, m: &TrayModel, on_top: bool) -> tauri::Result<Menu<taur
 fn on_menu(app: &AppHandle, id: &str) {
     match id {
         "open" => show_window(app),
+        crate::menu::SETTINGS_ID => crate::settings_window::open(app),
         ON_TOP_KEY => toggle_on_top(app),
         "quit" => app.exit(0),
         _ => {

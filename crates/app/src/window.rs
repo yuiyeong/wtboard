@@ -3,8 +3,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tauri::window::Color;
-use tauri::{AppHandle, Manager, Monitor, Theme, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, Monitor, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use wtboard_core::store::settings::{SettingsStore, WINDOW_KEY};
 use wtboard_core::window_fit::{decode, encode, fit, moved_by_user, Rect, Screen};
 
@@ -20,19 +19,24 @@ pub fn to_screen(x: i32, y: i32, width: u32, height: u32, scale: f64, primary: b
     }
 }
 
-/// 저장된 rect로 main 창을 만든다. 지금 화면에 들어오지 않으면 줄이거나 옮긴다
+/// 저장된 rect·theme으로 main 창을 만든다. 지금 화면에 들어오지 않으면 줄이거나 옮긴다
 pub fn create_main(app: &AppHandle, settings: &SettingsStore) -> tauri::Result<WebviewWindow> {
     let saved = settings.get(WINDOW_KEY).ok().flatten();
     let placement = fit(decode(saved.as_deref()), &screens(app));
     let mut builder = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::default())
         .title("wtboard")
-        .inner_size(placement.width, placement.height)
-        .theme(Some(Theme::Dark))
-        .background_color(Color(0x03, 0x07, 0x12, 0xff));
+        .inner_size(placement.width, placement.height);
     if let Some((x, y)) = placement.position {
         builder = builder.position(x, y);
     }
-    builder.build()
+    crate::theme::style(builder, crate::theme::current(settings)).build()
+}
+
+/// 숨었거나 최소화된 창을 보이고 앞으로 가져온다
+pub fn bring_to_front(window: &WebviewWindow) {
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
 }
 
 fn screens(app: &AppHandle) -> Vec<Screen> {

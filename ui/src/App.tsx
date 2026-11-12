@@ -4,12 +4,14 @@ import { Sidebar } from './components/Sidebar';
 import { WorktreeError, WorktreeView } from './components/WorktreeView';
 import { resolveSelection } from './lib/selection';
 import { useUiStore } from './store';
+import { useTheme } from './useTheme';
 import { useWorktreeEvents } from './useWorktreeEvents';
 import { useZoom } from './useZoom';
 
 export function App() {
   useWorktreeEvents();
   useZoom();
+  useTheme();
   const selection = useUiStore((s) => s.selection);
   const select = useUiStore((s) => s.select);
   // 앱이 레포를 여는 동안 list_repos는 기다렸다가 답한다.

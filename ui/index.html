@@ -4,6 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>wtboard</title>
+    <!-- 첫 화면부터 저장된 theme으로 그린다. 값은 창을 만들 때 Rust가 넣는 init script(theme::init_script)가 정한다 -->
+    <script>
+      document.documentElement.dataset.theme = window.__WTBOARD_THEME__ === 'light' ? 'light' : 'dark';
+    </script>
   </head>
   <body>
     <div id="root"></div>

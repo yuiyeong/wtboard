@@ -1,5 +1,8 @@
 mod comments;
 mod hook;
+mod menu;
+mod settings_window;
+mod theme;
 mod tray;
 mod window;
 
@@ -304,6 +307,8 @@ fn main() {
                 let _ = state.geometry.set(GeometrySaver::spawn(app.handle().clone(), baseline));
             }
             tray::build(app.handle())?;
+            app.set_menu(menu::build(app.handle())?)?;
+            app.on_menu_event(|app, event| menu::on_event(app, event.id().as_ref()));
             let handle = app.handle().clone();
             // 레포가 많거나 크면 수 초 걸린다. 창을 막지 않는다
             std::thread::spawn(move || {
@@ -313,7 +318,7 @@ fn main() {
             request_tray(app.handle());
             Ok(())
         })
-        // 창 닫기 = 숨기기. 앱은 메뉴바에 남는다
+        // 창 닫기 = 숨기기 (main 창, 설정창). 앱은 메뉴바에 남는다
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
@@ -342,6 +347,9 @@ fn main() {
             comments::resolve_comment,
             comments::unresolve_comment,
             comments::resend_comment,
+            theme::get_settings,
+            theme::set_theme,
+            settings_window::open_settings,
         ])
         .build(tauri::generate_context!())
         .expect("wtboard 실행 실패")
