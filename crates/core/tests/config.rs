@@ -114,8 +114,39 @@ fn add_appends_repo_and_keeps_rest() {
 
 #[test]
 fn add_to_empty_source() {
-    let cfg = Config::parse(&add_repo("", "~/c").unwrap()).unwrap();
-    assert_eq!(paths(&cfg), ["~/c"]);
+    let out = add_repo("", "~/c").unwrap();
+    assert!(out.starts_with("[[repo]]"), "{out:?}");
+    assert_eq!(paths(&Config::parse(&out).unwrap()), ["~/c"]);
+}
+
+/// 원래 내용은 한 byte도 움직이지 않고, 새 entry는 그 뒤에 온다
+fn assert_pure_append(src: &str, expected: &[&str]) {
+    let out = add_repo(src, "~/c").unwrap();
+    assert!(out.starts_with(src), "앞부분이 바뀜:\n{out}");
+    assert_eq!(paths(&Config::parse(&out).unwrap()), expected, "{out}");
+}
+
+#[test]
+fn add_keeps_comment_after_last_repo_above_new_entry() {
+    let src = "[[repo]]\npath = \"~/a\"\n# base = \"origin/develop\"\n";
+    assert_pure_append(src, &["~/a", "~/c"]);
+}
+
+#[test]
+fn add_goes_after_table_that_follows_repos() {
+    assert_pure_append(SRC, &["~/a", "~/b", "~/c"]);
+}
+
+#[test]
+fn add_keeps_trailing_comment_after_review() {
+    let src = format!("{SRC}# 끝 주석\n");
+    assert_pure_append(&src, &["~/a", "~/b", "~/c"]);
+}
+
+#[test]
+fn add_to_source_without_final_newline() {
+    assert_pure_append("[[repo]]\npath = \"~/a\"\n# 끝", &["~/a", "~/c"]);
+    assert_pure_append("[[repo]]\npath = \"~/a\"", &["~/a", "~/c"]);
 }
 
 #[test]
@@ -186,6 +217,22 @@ fn update_file_refuses_broken_file() {
     let err = update_file(&file, |src| add_repo(src, "~/c")).unwrap_err();
     assert!(matches!(err, ConfigError::Parse(_)), "{err}");
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "[[repo");
+}
+
+#[test]
+fn update_file_writes_nothing_when_edit_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("config.toml");
+    std::fs::write(&file, SRC).unwrap();
+    let err = update_file(&file, |src| remove_repo(src, "~/zzz")).unwrap_err();
+    assert!(matches!(err, ConfigError::RepoNotFound(_)), "{err}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), SRC);
+    let names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(names, ["config.toml"]);
+
+    let missing = dir.path().join("x/y/config.toml");
+    assert!(update_file(&missing, |src| remove_repo(src, "~/zzz")).is_err());
+    assert!(!dir.path().join("x").exists());
 }
 
 #[test]

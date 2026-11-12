@@ -1,21 +1,29 @@
 //! `config.toml`의 `[[repo]]`만 고친다. 사용자가 손으로 쓰는 파일이라 주석·빈 줄·다른 table은 그대로 둔다.
 
+use std::io::Write;
 use std::path::Path;
 
 use toml_edit::{value, ArrayOfTables, DocumentMut, Item, RawString, Table, Value};
 
 use super::config::{Config, ConfigError};
 
+/// 파일 끝에 `[[repo]]`를 붙인다. 원래 내용은 한 byte도 바꾸지 않는다
+/// (끝의 주석이 새 entry 아래로 내려가 그 entry의 것처럼 보이지 않게)
 pub fn add_repo(src: &str, repo_path: &str) -> Result<String, ConfigError> {
-    let mut doc: DocumentMut = src.parse()?;
-    let mut table = Table::new();
-    table.insert("path", value(repo_path));
-    if !src.trim().is_empty() {
-        table.decor_mut().set_prefix("\n");
+    let doc: DocumentMut = src.parse()?;
+    if doc.get("repo").is_some_and(|r| !r.is_array_of_tables()) {
+        return Err(ConfigError::RepoNotFound(repo_path.into()));
     }
-    let repos = doc.entry("repo").or_insert_with(|| Item::ArrayOfTables(ArrayOfTables::new()));
-    repos.as_array_of_tables_mut().ok_or_else(|| ConfigError::RepoNotFound(repo_path.into()))?.push(table);
-    Ok(doc.to_string())
+    let mut out = src.to_string();
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    if !out.trim().is_empty() {
+        out.push('\n');
+    }
+    // 새로 만든 Value는 decor가 없어 따옴표·escape를 포함한 TOML 문자열만 나온다
+    out += &format!("[[repo]]\npath = {}\n", Value::from(repo_path));
+    Ok(out)
 }
 
 pub fn remove_repo(src: &str, repo_path: &str) -> Result<String, ConfigError> {
@@ -74,8 +82,8 @@ pub fn set_repo_base(src: &str, repo_path: &str, base: Option<&str>) -> Result<S
     Ok(doc.to_string())
 }
 
-/// 읽기(없으면 "") → `Config::parse`로 확인 → `f` → 결과도 확인 → 같은 폴더의 임시 파일에 쓰고 rename.
-/// 깨진 파일에는 쓰지 않는다. 폴더가 없으면 만든다
+/// 읽기(없으면 "") → `Config::parse`로 확인 → `f` → 결과도 확인 → 같은 폴더의 임시 파일에 쓰고 fsync → rename.
+/// 깨진 파일에는 쓰지 않는다. 폴더가 없으면 만든다. 쓰는 도중 꺼져도 빈 파일이 남지 않는다
 pub fn update_file(path: &Path, f: impl FnOnce(&str) -> Result<String, ConfigError>) -> Result<(), ConfigError> {
     // dotfiles 레포로 symlink한 config도 symlink를 지키며 target을 고친다
     let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
@@ -95,7 +103,13 @@ pub fn update_file(path: &Path, f: impl FnOnce(&str) -> Result<String, ConfigErr
     let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
     tmp_name.push(format!(".tmp{}", std::process::id()));
     let tmp = path.with_file_name(tmp_name);
-    std::fs::write(&tmp, out)
+    let write_tmp = || -> std::io::Result<()> {
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(out.as_bytes())?;
+        // rename 뒤 꺼져도 내용이 디스크에 있게 한다
+        file.sync_all()
+    };
+    write_tmp()
         .and_then(|()| std::fs::rename(&tmp, &path))
         .map_err(|source| {
             let _ = std::fs::remove_file(&tmp);
