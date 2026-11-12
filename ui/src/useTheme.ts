@@ -3,10 +3,6 @@ import { listen } from '@tauri-apps/api/event';
 import { getSettings } from './api';
 import { parseTheme, type Theme } from './lib/theme';
 
-function applyTheme(theme: Theme) {
-  document.documentElement.dataset.theme = theme;
-}
-
 /**
  * `<html data-theme>`을 저장된 theme에 맞춘다. 처음 값은 창을 만들 때의 init script(`index.html`)가 정해 둔다.
  * webview를 다시 읽으면 init script가 창을 만들 때의 값으로 돌기 때문에 저장 값을 한 번 더 읽고, 그 뒤로는 `theme-changed`를 따른다.
@@ -17,7 +13,7 @@ export function useTheme(): Theme {
   useEffect(() => {
     let changed = false;
     const update = (next: Theme) => {
-      applyTheme(next);
+      document.documentElement.dataset.theme = next;
       setTheme(next);
     };
     getSettings()
