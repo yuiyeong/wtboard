@@ -193,3 +193,37 @@ export const setTheme = (theme: Theme) => invoke<void>('set_theme', { theme });
 
 /** 설정창을 연다 (이미 열려 있으면 앞으로) */
 export const openSettings = () => invoke<void>('open_settings');
+
+/** 설정창의 한 줄 = `config.toml`의 `[[repo]]` entry 하나 */
+export interface RepoEntry {
+  /** config에 적힌 그대로. 줄을 가리키는 key */
+  path: string;
+  name: string;
+  /** null이면 자동 */
+  base: string | null;
+  /** `origin/HEAD`가 가리키는 branch. 없으면 null */
+  autoBase: string | null;
+  /** 열 수 없는 entry의 이유 */
+  error: string | null;
+  unsentComments: number;
+}
+
+export interface RepoEntries {
+  entries: RepoEntry[];
+  configPath: string;
+  /** config를 읽지 못한 이유. 있으면 추가·삭제·base 변경을 끈다 */
+  error: string | null;
+}
+
+export const listRepoEntries = () => invoke<RepoEntries>('list_repo_entries');
+
+/** remote branch 다음 local branch. `path`는 config에 적힌 문자열 */
+export const listBaseCandidates = (path: string) => invoke<string[]>('list_base_candidates', { path });
+
+/** 폴더를 골라 등록한다. dialog를 취소하면 null, 아니면 config에 쓴 path */
+export const addRepo = () => invoke<string | null>('add_repo');
+
+export const removeRepo = (path: string) => invoke<void>('remove_repo', { path });
+
+/** `base`가 null이면 자동 */
+export const setRepoBase = (path: string, base: string | null) => invoke<void>('set_repo_base', { path, base });

@@ -1,6 +1,7 @@
 import { setTheme } from '../api';
 import type { Theme } from '../lib/theme';
 import { useTheme } from '../useTheme';
+import { Repositories } from './Repositories';
 
 const THEMES: { value: Theme; label: string }[] = [
   { value: 'dark', label: 'Dark' },
@@ -31,6 +32,10 @@ export function Settings() {
           ))}
         </div>
       </div>
+      <section className="space-y-2">
+        <h2 className="font-medium">Repositories</h2>
+        <Repositories />
+      </section>
     </div>
   );
 }

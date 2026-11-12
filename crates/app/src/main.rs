@@ -1,6 +1,7 @@
 mod comments;
 mod hook;
 mod menu;
+mod repos;
 mod settings_window;
 mod theme;
 mod tray;
@@ -8,7 +9,7 @@ mod window;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
@@ -44,6 +45,8 @@ struct AppState {
     /// main 창을 만든 뒤 채운다
     geometry: OnceLock<GeometrySaver>,
     tray: TrayUpdater,
+    /// 설정창의 레포 추가·삭제·base 변경을 하나씩 돌린다 (`config.toml` 읽기부터 registry 반영까지)
+    config_lock: Mutex<()>,
 }
 
 #[derive(Serialize)]
@@ -230,15 +233,15 @@ fn open_or_memory<T, E: std::fmt::Display>(
 
 /// `settings_warning`: `setup`에서 설정을 열지 못한 경고. sidebar 경고로 보인다
 fn open_registry(handle: &AppHandle, settings_warning: Option<EntryError>) -> Result<Registry, String> {
+    // 파일이 없거나 레포가 0개면 빈 registry다 (설정창에서 추가한다). 깨진 파일은 손으로 고쳐야 한다
     let path = Config::default_path();
-    let hint = format!("{} 에 다음을 추가하세요:\n\n[[repo]]\npath = \"~/dev/my-repo\"", path.display());
-    let config = Config::load(&path).map_err(|e| format!("{e}\n\n{hint}"))?;
+    let config = Config::load_or_default(&path).map_err(|e| {
+        let example = "[[repo]]\npath = \"~/dev/my-repo\"";
+        format!("{e}\n\n{} 을 고쳐 주세요. 레포 하나는 다음과 같이 씁니다:\n\n{example}", path.display())
+    })?;
     // 오래된 세션 기록을 지운다. 감시를 시작하기 전에 해서 지우는 것이 event로 오지 않게 한다
     let data = data_dir();
     cleanup(&data, config.sessions.keep_days, now_ms());
-    if config.repos.is_empty() {
-        return Err(format!("등록된 레포가 없습니다.\n\n{hint}"));
-    }
     let (changed, updated) = (handle.clone(), handle.clone());
     let sink = Sink {
         changed: Arc::new(move |ev: WorktreeChanged| {
@@ -282,6 +285,7 @@ fn open_registry(handle: &AppHandle, settings_warning: Option<EntryError>) -> Re
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // 창 크기·위치가 설정에 있으므로 창보다 먼저 연다. 열 수 없으면 이번 실행만 메모리에 둔다
             let (settings, settings_warning) = open_or_memory(
@@ -298,6 +302,7 @@ fn main() {
                 settings,
                 geometry: OnceLock::new(),
                 tray: TrayUpdater::spawn(app.handle().clone()),
+                config_lock: Mutex::new(()),
             });
             let state = app.state::<AppState>();
             let main = window::create_main(app.handle(), &state.settings)?;
@@ -350,6 +355,11 @@ fn main() {
             theme::get_settings,
             theme::set_theme,
             settings_window::open_settings,
+            repos::list_repo_entries,
+            repos::list_base_candidates,
+            repos::add_repo,
+            repos::remove_repo,
+            repos::set_repo_base,
         ])
         .build(tauri::generate_context!())
         .expect("wtboard 실행 실패")

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { listRepos } from './api';
+import { listRepos, openSettings } from './api';
 import { Sidebar } from './components/Sidebar';
 import { WorktreeError, WorktreeView } from './components/WorktreeView';
 import { resolveSelection } from './lib/selection';
@@ -29,7 +29,9 @@ export function App() {
         selectedId={current?.worktree.id ?? null}
         onSelect={select}
       />
-      {!current ? (
+      {repos.data.repos.length === 0 ? (
+        <NoRepos />
+      ) : !current ? (
         <p className="p-4 text-gray-500 dark:text-gray-400">열 수 있는 worktree가 없습니다. 왼쪽 아래 오류를 확인하세요.</p>
       ) : current.worktree.error ? (
         <WorktreeError worktree={current.worktree} />
@@ -41,6 +43,24 @@ export function App() {
           autoAttachComments={repos.data.autoAttachComments}
         />
       )}
+    </div>
+  );
+}
+
+/** 레포 0개 (config 없음 포함). sidebar의 오류 목록은 옆에 그대로 보인다 */
+function NoRepos() {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-4">
+      <p className="text-gray-500 dark:text-gray-400">등록된 레포가 없습니다</p>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => openSettings().catch((e) => console.warn('[wtboard] 설정창을 열 수 없음', e))}
+          className="rounded bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700"
+        >
+          Settings 열기
+        </button>
+        <span className="text-xs text-gray-400 dark:text-gray-500">⌘,</span>
+      </div>
     </div>
   );
 }
