@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
@@ -14,9 +14,11 @@ import {
 import { autoLabel, baseOptions } from '../lib/settings';
 
 const ENTRIES_KEY = ['repo-entries'];
+/** 줄마다 `[...CANDIDATES_KEY, path]` */
+const CANDIDATES_KEY = ['base-candidates'];
 const BUTTON = 'rounded border border-gray-300 dark:border-gray-700 px-2 py-0.5 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50';
 
-/** command를 하나씩 돌리고, 실패하면 목록 아래에 그 문구를 보인다. 끝나면 목록을 다시 읽는다 */
+/** command를 하나씩 돌리고, 실패하면 목록 아래에 그 문구를 보인다. 끝나면 목록과 base 후보를 다시 읽는다 */
 type Run = (action: () => Promise<unknown>) => void;
 
 /** 설정창의 Repositories: `config.toml`의 `[[repo]]` 목록, 추가·삭제·base 변경 */
@@ -27,7 +29,7 @@ export function Repositories() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const refetch = () => queryClient.invalidateQueries({ queryKey: ENTRIES_KEY });
+    const refetch = () => refresh(queryClient);
     const unlistenUpdated = listen('worktrees-updated', refetch);
     // 닫기 = 숨기기라 다시 열어도 화면이 그대로다. 그 사이 손으로 고친 config를 보이게 앞에 올 때마다 다시 읽는다
     const unlistenFocus = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
@@ -46,7 +48,7 @@ export function Repositories() {
       .catch((e) => setError(String(e)))
       .finally(() => {
         setBusy(false);
-        queryClient.invalidateQueries({ queryKey: ENTRIES_KEY });
+        refresh(queryClient);
       });
   };
 
@@ -83,15 +85,20 @@ export function Repositories() {
   );
 }
 
+/** 목록과 base 후보 (branch가 생기거나 지워졌을 수 있다) */
+function refresh(queryClient: QueryClient) {
+  queryClient.invalidateQueries({ queryKey: ENTRIES_KEY });
+  queryClient.invalidateQueries({ queryKey: CANDIDATES_KEY });
+}
+
 function RepoRow({ entry, disabled, run }: { entry: RepoEntry; disabled: boolean; run: Run }) {
   const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState(false);
-  // 후보는 git을 부르므로 그 줄의 select에 처음 다가갈 때 읽는다 (pointer가 올라오면 미리 읽어 펼칠 때 목록이 차 있게)
-  const [wanted, setWanted] = useState(false);
+  // 줄이 보일 때 미리 읽는다. native popup은 열린 동안 option이 늘어도 반영되지 않아서, 키보드·accessibility로 바로 열어도 다 보이게
   const candidates = useQuery({
-    queryKey: ['base-candidates', entry.path],
+    queryKey: [...CANDIDATES_KEY, entry.path],
     queryFn: () => listBaseCandidates(entry.path),
-    enabled: wanted && !entry.error,
+    enabled: !entry.error,
   });
 
   const changeBase = (value: string) => {
@@ -141,8 +148,6 @@ function RepoRow({ entry, disabled, run }: { entry: RepoEntry; disabled: boolean
             title="PR이 있는 worktree는 PR base가 우선합니다"
             value={entry.base ?? ''}
             disabled={disabled || entry.error !== null}
-            onMouseEnter={() => setWanted(true)}
-            onFocus={() => setWanted(true)}
             onChange={(e) => changeBase(e.target.value)}
           >
             <option value="">{autoLabel(entry.autoBase)}</option>
