@@ -93,6 +93,37 @@ pub fn moved_by_user(baseline: &Rect, current: &Rect) -> bool {
     .any(|(a, b)| (a - b).abs() > MOVE_TOLERANCE)
 }
 
+/// 저장을 시도하는 때의 창 상태
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowState {
+    pub fullscreen: bool,
+    pub minimized: bool,
+    pub visible: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveAction {
+    Nothing,
+    /// `current`를 저장하고 baseline으로 삼는다
+    Save,
+    /// 저장하지 않고 `current`와 지금 화면 구성을 baseline으로 삼는다
+    Rebaseline,
+}
+
+/// `screens_changed`: baseline을 잡을 때와 지금의 모니터 구성이 다르다.
+/// 그 사이 바뀐 rect는 OS가 모니터에 맞춰 줄이거나 옮긴 것이라 사용자의 선택이 아니다
+pub fn save_action(state: WindowState, screens_changed: bool, baseline: &Rect, current: &Rect) -> SaveAction {
+    if state.fullscreen || state.minimized || !state.visible {
+        SaveAction::Nothing
+    } else if screens_changed {
+        SaveAction::Rebaseline
+    } else if moved_by_user(baseline, current) {
+        SaveAction::Save
+    } else {
+        SaveAction::Nothing
+    }
+}
+
 fn overlap(a: &Rect, b: &Rect) -> f64 {
     let w = (a.x + a.width).min(b.x + b.width) - a.x.max(b.x);
     let h = (a.y + a.height).min(b.y + b.height) - a.y.max(b.y);

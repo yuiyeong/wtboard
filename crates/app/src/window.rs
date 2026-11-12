@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Manager, Monitor, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use wtboard_core::store::settings::{SettingsStore, WINDOW_KEY};
-use wtboard_core::window_fit::{decode, encode, fit, moved_by_user, Rect, Screen};
+use wtboard_core::window_fit::{decode, encode, fit, save_action, Rect, SaveAction, Screen, WindowState};
 
 pub const MAIN: &str = "main";
 /// 옮기거나 크기를 바꾸는 동안은 저장하지 않는다. 마지막 event 뒤 이만큼 지나면 저장한다
@@ -61,7 +61,7 @@ pub fn rect(window: &WebviewWindow) -> Option<Rect> {
 }
 
 /// 창 크기·위치 저장. 복원 직후 rect(`baseline`)에서 달라졌을 때만 저장한다.
-/// 앱이 화면에 맞춰 줄이거나 옮긴 rect는 저장하지 않는다
+/// 앱이 화면에 맞춰 줄이거나 옮긴 rect, 모니터 구성이 바뀌어 OS가 바꾼 rect는 저장하지 않는다
 pub struct GeometrySaver {
     tx: mpsc::Sender<()>,
     saver: Arc<Saver>,
@@ -69,12 +69,19 @@ pub struct GeometrySaver {
 
 struct Saver {
     app: AppHandle,
-    /// 마지막으로 저장한(또는 복원한) rect. 비교와 저장을 이 lock 안에서 해서 두 저장이 엇갈리지 않게 한다
-    baseline: Mutex<Rect>,
+    /// 비교와 저장을 이 lock 안에서 해서 두 저장이 엇갈리지 않게 한다
+    baseline: Mutex<Baseline>,
+}
+
+/// 마지막으로 저장한(또는 복원한) rect와 그때의 모니터 구성
+struct Baseline {
+    rect: Rect,
+    screens: Vec<Screen>,
 }
 
 impl GeometrySaver {
     pub fn spawn(app: AppHandle, baseline: Rect) -> Self {
+        let baseline = Baseline { rect: baseline, screens: screens(&app) };
         let saver = Arc::new(Saver { app, baseline: Mutex::new(baseline) });
         let (tx, rx) = mpsc::channel();
         let worker = saver.clone();
@@ -93,7 +100,7 @@ impl GeometrySaver {
         let _ = self.tx.send(());
     }
 
-    /// 종료 직전에 부른다. 기다리지 않고 바로 저장한다
+    /// 종료나 창 닫기 직전에 부른다. 기다리지 않고 바로 저장한다
     pub fn flush(&self) {
         self.saver.save();
     }
@@ -102,22 +109,26 @@ impl GeometrySaver {
 impl Saver {
     fn save(&self) {
         let Some(window) = self.app.get_webview_window(MAIN) else { return };
-        // 이때의 rect는 사용자가 정한 창 크기가 아니다
-        let skip = window.is_fullscreen().unwrap_or(true)
-            || window.is_minimized().unwrap_or(true)
-            || !window.is_visible().unwrap_or(false);
-        if skip {
-            return;
-        }
+        // 모를 때는 사용자가 정한 창 크기가 아닌 것으로 본다
+        let state = WindowState {
+            fullscreen: window.is_fullscreen().unwrap_or(true),
+            minimized: window.is_minimized().unwrap_or(true),
+            visible: window.is_visible().unwrap_or(false),
+        };
         let Some(current) = rect(&window) else { return };
+        let now = screens(&self.app);
         let mut baseline = self.baseline.lock().unwrap();
-        if !moved_by_user(&baseline, &current) {
-            return;
-        }
-        let settings = &self.app.state::<crate::AppState>().settings;
-        match settings.set(WINDOW_KEY, &encode(&current)) {
-            Ok(()) => *baseline = current,
-            Err(e) => eprintln!("[wtboard] 창 크기·위치를 저장할 수 없음: {e}"),
+        // 모니터를 뽑거나 꽂으면 OS가 창을 줄이거나 옮긴다. 그 rect를 저장하면 다음 실행이 작게 뜬다
+        match save_action(state, now != baseline.screens, &baseline.rect, &current) {
+            SaveAction::Nothing => {}
+            SaveAction::Rebaseline => *baseline = Baseline { rect: current, screens: now },
+            SaveAction::Save => {
+                let settings = &self.app.state::<crate::AppState>().settings;
+                match settings.set(WINDOW_KEY, &encode(&current)) {
+                    Ok(()) => baseline.rect = current,
+                    Err(e) => eprintln!("[wtboard] 창 크기·위치를 저장할 수 없음: {e}"),
+                }
+            }
         }
     }
 }

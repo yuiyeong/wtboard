@@ -332,6 +332,12 @@ fn main() {
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
+                // 숨긴 창은 저장하지 않으므로, 옮긴 직후 닫아도 남게 저장 대기 중인 rect를 먼저 쓴다
+                if window.label() == window::MAIN {
+                    if let Some(g) = window.state::<AppState>().geometry.get() {
+                        g.flush();
+                    }
+                }
                 let _ = window.hide();
             }
             WindowEvent::Moved(_) | WindowEvent::Resized(_) if window.label() == window::MAIN => {

@@ -1,4 +1,4 @@
-use wtboard_core::window_fit::{decode, encode, fit, moved_by_user, Placement, Rect, Screen};
+use wtboard_core::window_fit::{decode, encode, fit, moved_by_user, save_action, Placement, Rect, SaveAction, Screen, WindowState};
 
 fn rect(x: f64, y: f64, width: f64, height: f64) -> Rect {
     Rect { x, y, width, height }
@@ -67,6 +67,13 @@ fn fit_picks_screen_with_most_overlap() {
 }
 
 #[test]
+fn fit_straddling_rect_goes_to_screen_with_more_area_not_primary() {
+    // mac 위로 240pt, ext 위로 1200pt 걸친다. ext 쪽 넓이가 훨씬 크다
+    let saved = rect(1200.0, 100.0, 1440.0, 800.0);
+    assert_eq!(fit(Some(saved), &[mac(), ext()]), placed(1440.0, 800.0, Some((1440.0, 100.0))));
+}
+
+#[test]
 fn fit_without_screens_returns_saved() {
     let saved = rect(10.0, 10.0, 900.0, 700.0);
     assert_eq!(fit(Some(saved), &[]), placed(900.0, 700.0, Some((10.0, 10.0))));
@@ -93,4 +100,36 @@ fn moved_by_user_ignores_subpoint_noise() {
     assert!(!moved_by_user(&base, &base));
     assert!(!moved_by_user(&base, &rect(100.0, 100.5, 1200.0, 800.0)));
     assert!(moved_by_user(&base, &rect(100.0, 100.0, 1210.0, 800.0)));
+}
+
+const SHOWN: WindowState = WindowState { fullscreen: false, minimized: false, visible: true };
+
+#[test]
+fn save_action_skips_when_rect_is_not_users_choice() {
+    let base = rect(100.0, 100.0, 1200.0, 800.0);
+    let moved = rect(300.0, 100.0, 1200.0, 800.0);
+    for state in [
+        WindowState { fullscreen: true, ..SHOWN },
+        WindowState { minimized: true, ..SHOWN },
+        WindowState { visible: false, ..SHOWN },
+    ] {
+        assert_eq!(save_action(state, false, &base, &moved), SaveAction::Nothing, "{state:?}");
+        assert_eq!(save_action(state, true, &base, &moved), SaveAction::Nothing, "{state:?}");
+    }
+}
+
+#[test]
+fn save_action_rebaselines_when_screens_changed() {
+    let base = rect(1500.0, 100.0, 2000.0, 1200.0);
+    // 외부 모니터를 뽑아 OS가 줄이고 옮긴 rect
+    let shrunk = rect(0.0, 25.0, 1440.0, 875.0);
+    assert_eq!(save_action(SHOWN, true, &base, &shrunk), SaveAction::Rebaseline);
+    assert_eq!(save_action(SHOWN, true, &base, &base), SaveAction::Rebaseline);
+}
+
+#[test]
+fn save_action_saves_only_users_move_on_same_screens() {
+    let base = rect(100.0, 100.0, 1200.0, 800.0);
+    assert_eq!(save_action(SHOWN, false, &base, &rect(300.0, 100.0, 1200.0, 800.0)), SaveAction::Save);
+    assert_eq!(save_action(SHOWN, false, &base, &rect(100.0, 100.5, 1200.0, 800.0)), SaveAction::Nothing);
 }
