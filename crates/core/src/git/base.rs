@@ -35,10 +35,13 @@ pub fn resolve_base(git: &Git, configured: Option<&str>, pr: Option<&str>) -> Re
     if let Some(name) = pr {
         return Ok(Base { name: name.to_owned(), source: BaseSource::Pr });
     }
-    let name = git
-        .run_str(&["rev-parse", "--abbrev-ref", "origin/HEAD"])
-        .map_err(|_| BaseError::NotFound)?;
+    let name = origin_head(git).ok_or(BaseError::NotFound)?;
     Ok(Base { name, source: BaseSource::Origin })
+}
+
+/// `origin/HEAD`가 가리키는 branch (`origin/develop`). 없으면 `None`
+pub fn origin_head(git: &Git) -> Option<String> {
+    git.run_str(&["rev-parse", "--abbrev-ref", "origin/HEAD"]).ok()
 }
 
 /// PR base 브랜치 이름(`develop`)을 로컬에 있는 remote 브랜치(`origin/develop`)로 바꾼다. 없으면 `None`

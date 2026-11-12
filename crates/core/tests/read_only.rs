@@ -4,6 +4,8 @@ use std::time::{Duration, SystemTime};
 
 use common::TestRepo;
 use wtboard_core::domain::FileStatus;
+use wtboard_core::git::base::origin_head;
+use wtboard_core::git::branches::{base_candidates, toplevel};
 use wtboard_core::git::changes::list_changes;
 use wtboard_core::git::patch::file_patch;
 use wtboard_core::git::attrs::linguist_generated;
@@ -107,6 +109,21 @@ fn set_viewed_leaves_the_index_untouched() {
     let wt = Worktree::open(repo.path(), Some("main".into())).unwrap();
     wt.set_viewed("src/a.py", true, None).unwrap();
     wt.set_viewed("src/a.py", false, None).unwrap();
+
+    assert_eq!(std::fs::read(&index).unwrap(), before, ".git/index was rewritten");
+}
+
+#[test]
+fn branch_listing_and_toplevel_leave_the_index_untouched() {
+    let (_upstream, clone) = common::clone_on_feat_with_develop();
+    clone.write("README.md", "changed\n");
+    let index = clone.path().join(".git/index");
+    let before = std::fs::read(&index).unwrap();
+
+    let git = Git::new(clone.path());
+    base_candidates(&git).unwrap();
+    toplevel(&git).unwrap();
+    origin_head(&git).unwrap();
 
     assert_eq!(std::fs::read(&index).unwrap(), before, ".git/index was rewritten");
 }

@@ -1,5 +1,6 @@
 pub mod attrs;
 pub mod base;
+pub mod branches;
 pub mod changes;
 pub mod patch;
 pub mod worktrees;
