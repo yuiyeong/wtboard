@@ -108,16 +108,23 @@ fn edit<T>(app: &AppHandle, f: impl FnOnce(&Path) -> Result<T, String>) -> Resul
     let state = app.state::<AppState>();
     let _serial = state.config_lock.lock().unwrap_or_else(PoisonError::into_inner);
     let path = Config::default_path();
-    let out = f(&path)?;
+    let (reg, out) = when_ready(registry(app), || f(&path))?;
     let config = Config::load(&path).map_err(|e| e.to_string())?;
     // 다시 연 레포는 worktree id가 그대로라 화면의 파일 목록·diff query가 옛 base로 남는다
-    for worktree_id in registry(app)?.apply(&config) {
+    for worktree_id in reg.apply(&config) {
         let ev = WorktreeChanged { worktree_id, changed_paths: Vec::new(), scope: ChangeScope::Base };
         let _ = app.emit("worktree-changed", ev);
     }
     let _ = app.emit("worktrees-updated", ());
     request_tray(app);
     Ok(out)
+}
+
+/// registry가 열려 있을 때만 `f`(config 쓰기)를 부른다. 시작 때 config가 깨져 열지 못했으면
+/// 그 실패가 재시작 전까지 남아 반영할 수 없으므로, 파일을 고쳐 놓고 옛 오류를 보이지 않게 아무것도 쓰지 않는다
+fn when_ready<R, T>(registry: Result<R, String>, f: impl FnOnce() -> Result<T, String>) -> Result<(R, T), String> {
+    let registry = registry.map_err(|_| "앱을 다시 시작해야 합니다 (시작할 때 설정 파일을 읽지 못했습니다)".to_string())?;
+    Ok((registry, f()?))
 }
 
 /// `unsent`: worktree id → 미전송 코멘트 수
@@ -243,6 +250,20 @@ mod tests {
         assert_eq!(add_picked(&path, &root.join("src"), None), Err("이미 등록된 repository입니다".to_string()));
         assert_eq!(add_picked(&path, &plain, None), Err("git repository가 아닙니다".to_string()));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn edit_writes_nothing_when_registry_failed_at_startup() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        let write = || update_file(&path, |src| config_edit::add_repo(src, "~/a")).map_err(|e| e.to_string());
+        let err = when_ready(Err::<(), _>("형식 오류".to_string()), write).unwrap_err();
+        assert!(err.starts_with("앱을 다시 시작해야 합니다"), "{err}");
+        assert!(!path.exists());
+
+        let write = || update_file(&path, |src| config_edit::add_repo(src, "~/a")).map_err(|e| e.to_string());
+        assert_eq!(when_ready(Ok::<_, String>(1), write), Ok((1, ())));
+        assert_eq!(Config::load(&path).unwrap().repos[0].path, "~/a");
     }
 
     #[test]

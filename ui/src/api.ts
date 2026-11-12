@@ -71,6 +71,8 @@ export interface EntryError {
 export interface ReposResponse {
   repos: RepoSummary[];
   errors: EntryError[];
+  /** 적용한 config의 `[[repo]]` 수. 열지 못한 entry도 센다 */
+  configuredRepos: number;
   /** 다음 prompt에 미전송 코멘트를 자동으로 붙인다 (꺼져 있으면 복사해서 붙여 넣는다) */
   autoAttachComments: boolean;
 }

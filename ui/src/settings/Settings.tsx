@@ -23,7 +23,7 @@ export function Settings() {
               onClick={() => setTheme(t.value).catch((e) => console.warn('[wtboard] theme을 바꿀 수 없음', e))}
               className={
                 theme === t.value
-                  ? 'rounded bg-gray-800 dark:bg-gray-700 px-4 py-1 text-white'
+                  ? 'rounded bg-gray-800 dark:bg-gray-600 px-4 py-1 text-white'
                   : 'rounded px-4 py-1 text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
               }
             >

@@ -145,7 +145,7 @@ function RepoRow({ entry, disabled, run }: { entry: RepoEntry; disabled: boolean
           <span className="text-gray-500 dark:text-gray-400">base</span>
           <select
             className="max-w-44 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-1 py-0.5 disabled:opacity-50"
-            title="PR이 있는 worktree는 PR base가 우선합니다"
+            title={entry.base === null ? 'PR이 있는 worktree는 PR base가 우선합니다' : undefined}
             value={entry.base ?? ''}
             disabled={disabled || entry.error !== null}
             onChange={(e) => changeBase(e.target.value)}

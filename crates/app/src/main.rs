@@ -54,6 +54,8 @@ struct AppState {
 struct ReposResponse {
     repos: Vec<RepoSummary>,
     errors: Vec<EntryError>,
+    /// 적용한 config의 `[[repo]]` 수. 열지 못한 entry도 센다 (`repos`가 비었을 때 "등록 없음"과 "열지 못함"을 가른다)
+    configured_repos: usize,
     /// 설정을 읽지 못하면 true (기본값)
     auto_attach_comments: bool,
 }
@@ -79,7 +81,7 @@ async fn list_repos(app: AppHandle) -> Result<ReposResponse, String> {
         }
         let auto_attach_comments =
             Config::load(&Config::default_path()).map_or(true, |c| c.review.auto_attach_comments);
-        Ok(ReposResponse { repos, errors: reg.errors(), auto_attach_comments })
+        Ok(ReposResponse { repos, errors: reg.errors(), configured_repos: reg.configured_repos(), auto_attach_comments })
     })
     .await
 }

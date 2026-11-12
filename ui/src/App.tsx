@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { listRepos, openSettings } from './api';
 import { Sidebar } from './components/Sidebar';
 import { WorktreeError, WorktreeView } from './components/WorktreeView';
+import { emptyScreen } from './lib/emptyScreen';
 import { resolveSelection } from './lib/selection';
 import { useUiStore } from './store';
 import { useTheme } from './useTheme';
@@ -21,6 +22,7 @@ export function App() {
   if (!repos.data) return <p className="p-4 text-gray-500 dark:text-gray-400">불러오는 중…</p>;
 
   const current = resolveSelection(repos.data.repos, selection);
+  const empty = emptyScreen(repos.data.configuredRepos, repos.data.repos.length);
   return (
     <div className="flex h-screen">
       <Sidebar
@@ -29,10 +31,10 @@ export function App() {
         selectedId={current?.worktree.id ?? null}
         onSelect={select}
       />
-      {repos.data.repos.length === 0 ? (
-        <NoRepos />
+      {empty ? (
+        <NoOpenRepos message={empty === 'noRepos' ? '등록된 레포가 없습니다' : UNOPENED} />
       ) : !current ? (
-        <p className="p-4 text-gray-500 dark:text-gray-400">열 수 있는 worktree가 없습니다. 왼쪽 아래 오류를 확인하세요.</p>
+        <p className="p-4 text-gray-500 dark:text-gray-400">{UNOPENED}</p>
       ) : current.worktree.error ? (
         <WorktreeError worktree={current.worktree} />
       ) : (
@@ -47,11 +49,13 @@ export function App() {
   );
 }
 
-/** 레포 0개 (config 없음 포함). sidebar의 오류 목록은 옆에 그대로 보인다 */
-function NoRepos() {
+const UNOPENED = '열 수 있는 worktree가 없습니다. 왼쪽 아래 오류를 확인하세요.';
+
+/** 열린 레포 0개 (config 없음 포함). sidebar의 오류 목록은 옆에 그대로 보인다 */
+function NoOpenRepos({ message }: { message: string }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-4">
-      <p className="text-gray-500 dark:text-gray-400">등록된 레포가 없습니다</p>
+      <p className="text-gray-500 dark:text-gray-400">{message}</p>
       <div className="flex items-center gap-2">
         <button
           onClick={() => openSettings().catch((e) => console.warn('[wtboard] 설정창을 열 수 없음', e))}
