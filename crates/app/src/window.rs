@@ -1,5 +1,5 @@
 //! main 창: 저장된 크기·위치로 만들고, 사용자가 옮기거나 크기를 바꾸면 저장한다
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -77,13 +77,7 @@ impl GeometrySaver {
         std::thread::spawn(move || {
             // 요청이 오면 SAVE_DELAY 동안 조용해질 때까지 기다린 뒤 저장한다
             while rx.recv().is_ok() {
-                loop {
-                    match rx.recv_timeout(SAVE_DELAY) {
-                        Ok(()) => continue,
-                        Err(RecvTimeoutError::Timeout) => break,
-                        Err(RecvTimeoutError::Disconnected) => return,
-                    }
-                }
+                while rx.recv_timeout(SAVE_DELAY).is_ok() {}
                 worker.save();
             }
         });

@@ -38,8 +38,6 @@ struct AppState {
     comments: OnceLock<Arc<CommentStore>>,
     /// 앱 설정(창 크기·위치, 항상 위에 등). 창을 만들기 전에 `setup`에서 연다
     settings: SettingsStore,
-    /// 열지 못해 메모리에 둔 설정의 경고. registry를 열 때 sidebar 경고로 보인다
-    settings_warning: Option<EntryError>,
     /// main 창을 만든 뒤 채운다
     geometry: OnceLock<GeometrySaver>,
     tray: TrayUpdater,
@@ -227,7 +225,8 @@ fn open_or_memory<T, E: std::fmt::Display>(
     }
 }
 
-fn open_registry(handle: &AppHandle) -> Result<Registry, String> {
+/// `settings_warning`: `setup`에서 설정을 열지 못한 경고. sidebar 경고로 보인다
+fn open_registry(handle: &AppHandle, settings_warning: Option<EntryError>) -> Result<Registry, String> {
     let path = Config::default_path();
     let hint = format!("{} 에 다음을 추가하세요:\n\n[[repo]]\npath = \"~/dev/my-repo\"", path.display());
     let config = Config::load(&path).map_err(|e| format!("{e}\n\n{hint}"))?;
@@ -260,7 +259,7 @@ fn open_registry(handle: &AppHandle) -> Result<Registry, String> {
     let state = handle.state::<AppState>();
     let _ = state.comments.set(Arc::new(comments));
     let mut reg = Registry::open(&config, Gh::detect(), Arc::new(viewed), sink);
-    for w in [viewed_warning, comments_warning, state.settings_warning.clone()].into_iter().flatten() {
+    for w in [viewed_warning, comments_warning, settings_warning].into_iter().flatten() {
         reg.warn(w);
     }
     // 옛 hook binary는 schema가 올라간 DB를 열지 못해 첨부가 조용히 멈춘다
@@ -294,7 +293,6 @@ fn main() {
                 session_cache: SessionViewCache::default(),
                 comments: OnceLock::new(),
                 settings,
-                settings_warning,
                 geometry: OnceLock::new(),
                 tray: TrayUpdater::spawn(app.handle().clone()),
             });
@@ -309,7 +307,7 @@ fn main() {
             let handle = app.handle().clone();
             // 레포가 많거나 크면 수 초 걸린다. 창을 막지 않는다
             std::thread::spawn(move || {
-                let result = open_registry(&handle);
+                let result = open_registry(&handle, settings_warning);
                 let _ = handle.state::<AppState>().registry.set(result);
             });
             request_tray(app.handle());
