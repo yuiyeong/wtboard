@@ -10,4 +10,5 @@ pub mod repo;
 pub mod review;
 pub mod session;
 pub mod watch;
+pub mod window_fit;
 pub mod worktree;
