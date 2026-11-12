@@ -14,7 +14,7 @@ export function Settings() {
     <div className="space-y-6 p-6 text-sm">
       <div className="flex items-center gap-6">
         <span className="w-28 font-medium">Theme</span>
-        <div className="flex rounded-md border border-gray-700 p-0.5">
+        <div className="flex rounded-md border border-gray-300 dark:border-gray-700 p-0.5">
           {THEMES.map((t) => (
             <button
               key={t.value}
@@ -22,8 +22,8 @@ export function Settings() {
               onClick={() => setTheme(t.value).catch((e) => console.warn('[wtboard] theme을 바꿀 수 없음', e))}
               className={
                 theme === t.value
-                  ? 'rounded bg-gray-700 px-4 py-1 text-white'
-                  : 'rounded px-4 py-1 text-gray-400 hover:text-gray-200'
+                  ? 'rounded bg-gray-800 dark:bg-gray-700 px-4 py-1 text-white'
+                  : 'rounded px-4 py-1 text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
               }
             >
               {t.label}
