@@ -5,6 +5,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{db, StoreError};
 
+/// main 창 rect. 값은 `window_fit::encode`의 JSON (logical point)
+pub const WINDOW_KEY: &str = "window_main";
+
 /// 앱 설정 key-value (`always_on_top` 등). 값은 문자열로 저장한다
 #[derive(Debug)]
 pub struct SettingsStore {

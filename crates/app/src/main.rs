@@ -1,6 +1,7 @@
 mod comments;
 mod hook;
 mod tray;
+mod window;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -24,6 +25,7 @@ use wtboard_core::watch::{spawn_sessions_watcher, SessionsWatchHandle};
 use wtboard_core::worktree::{now_ms, FileEntry, Worktree, WorktreeChanged};
 
 use tray::TrayUpdater;
+use window::GeometrySaver;
 
 /// Registry는 background thread에서 열고 끝나면 채운다. command는 채워질 때까지 기다린다
 struct AppState {
@@ -34,8 +36,12 @@ struct AppState {
     session_cache: SessionViewCache,
     /// registry와 함께 열린다. registry를 기다린 뒤에는 채워져 있다
     comments: OnceLock<Arc<CommentStore>>,
-    /// 앱 설정(tray 등). 열 때 `comments`와 같이 채운다
-    settings: OnceLock<SettingsStore>,
+    /// 앱 설정(창 크기·위치, 항상 위에 등). 창을 만들기 전에 `setup`에서 연다
+    settings: SettingsStore,
+    /// 열지 못해 메모리에 둔 설정의 경고. registry를 열 때 sidebar 경고로 보인다
+    settings_warning: Option<EntryError>,
+    /// main 창을 만든 뒤 채운다
+    geometry: OnceLock<GeometrySaver>,
     tray: TrayUpdater,
 }
 
@@ -248,17 +254,13 @@ fn open_registry(handle: &AppHandle) -> Result<Registry, String> {
         open_or_memory(&state_path, "봤음 상태를 저장할 수 없음", ViewedStore::open, ViewedStore::in_memory);
     let (comments, comments_warning) =
         open_or_memory(&state_path, "코멘트를 저장할 수 없음", CommentStore::open, CommentStore::in_memory);
-    let (settings, settings_warning) =
-        open_or_memory(&state_path, "설정을 저장할 수 없음", SettingsStore::open, SettingsStore::in_memory);
     // 전송된 지 오래된 코멘트를 지운다
     let cutoff = now_ms().saturating_sub(config.sessions.keep_days.saturating_mul(86_400_000));
     let _ = comments.purge_sent_before(cutoff);
-    tray::apply_saved_on_top(handle, &settings);
     let state = handle.state::<AppState>();
     let _ = state.comments.set(Arc::new(comments));
-    let _ = state.settings.set(settings);
     let mut reg = Registry::open(&config, Gh::detect(), Arc::new(viewed), sink);
-    for w in [viewed_warning, comments_warning, settings_warning].into_iter().flatten() {
+    for w in [viewed_warning, comments_warning, state.settings_warning.clone()].into_iter().flatten() {
         reg.warn(w);
     }
     // 옛 hook binary는 schema가 올라간 DB를 열지 못해 첨부가 조용히 멈춘다
@@ -279,14 +281,30 @@ fn open_registry(handle: &AppHandle) -> Result<Registry, String> {
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
+            // 창 크기·위치가 설정에 있으므로 창보다 먼저 연다. 열 수 없으면 이번 실행만 메모리에 둔다
+            let (settings, settings_warning) = open_or_memory(
+                &data_dir().join("state.sqlite"),
+                "설정을 저장할 수 없음",
+                SettingsStore::open,
+                SettingsStore::in_memory,
+            );
             app.manage(AppState {
                 registry: OnceLock::new(),
                 sessions_watch: OnceLock::new(),
                 session_cache: SessionViewCache::default(),
                 comments: OnceLock::new(),
-                settings: OnceLock::new(),
+                settings,
+                settings_warning,
+                geometry: OnceLock::new(),
                 tray: TrayUpdater::spawn(app.handle().clone()),
             });
+            let state = app.state::<AppState>();
+            let main = window::create_main(app.handle(), &state.settings)?;
+            tray::apply_saved_on_top(&main, &state.settings);
+            // 기준은 요청한 rect가 아니라 OS가 실제로 놓은 rect다
+            if let Some(baseline) = window::rect(&main) {
+                let _ = state.geometry.set(GeometrySaver::spawn(app.handle().clone(), baseline));
+            }
             tray::build(app.handle())?;
             let handle = app.handle().clone();
             // 레포가 많거나 크면 수 초 걸린다. 창을 막지 않는다
@@ -298,11 +316,17 @@ fn main() {
             Ok(())
         })
         // 창 닫기 = 숨기기. 앱은 메뉴바에 남는다
-        .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match event {
+            WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
                 let _ = window.hide();
             }
+            WindowEvent::Moved(_) | WindowEvent::Resized(_) if window.label() == window::MAIN => {
+                if let Some(g) = window.state::<AppState>().geometry.get() {
+                    g.request();
+                }
+            }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             list_repos,
@@ -323,11 +347,17 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("wtboard 실행 실패")
-        .run(|app, event| {
+        .run(|app, event| match event {
             // Dock 아이콘을 누르면 숨긴 창을 다시 보인다
-            if let RunEvent::Reopen { .. } = event {
-                tray::show_window(app);
+            RunEvent::Reopen { .. } => tray::show_window(app),
+            // 마지막으로 옮긴 뒤 저장 대기 중이던 rect를 남긴다.
+            // tray `종료`(`app.exit`)는 ExitRequested, ⌘Q·app menu Quit(NSApp terminate)은 Exit만 온다
+            RunEvent::ExitRequested { .. } | RunEvent::Exit => {
+                if let Some(g) = app.state::<AppState>().geometry.get() {
+                    g.flush();
+                }
             }
+            _ => {}
         });
 }
 

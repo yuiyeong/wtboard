@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::menu::{CheckMenuItemBuilder, Menu, MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use wtboard_core::repo::TrayWorktree;
 use wtboard_core::session::list::active_roots;
 use wtboard_core::store::data_dir;
@@ -15,7 +15,7 @@ use wtboard_core::store::settings::SettingsStore;
 use wtboard_core::worktree::now_ms;
 
 const TRAY_ID: &str = "main";
-const WINDOW: &str = "main";
+const WINDOW: &str = crate::window::MAIN;
 /// `settings` key. 값은 `"1"` / `"0"`
 const ON_TOP_KEY: &str = "always_on_top";
 /// 요청이 몰려도 이 간격에 한 번만 계산한다
@@ -105,12 +105,10 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// 저장된 "항상 위에"를 창에 적용한다. 앱 시작 때 설정을 연 직후 부른다
-pub fn apply_saved_on_top(app: &AppHandle, settings: &SettingsStore) {
+/// 저장된 "항상 위에"를 창에 적용한다. 앱 시작 때 main 창을 만든 직후 부른다
+pub fn apply_saved_on_top(window: &WebviewWindow, settings: &SettingsStore) {
     if settings.get(ON_TOP_KEY).ok().flatten().as_deref() == Some("1") {
-        if let Some(w) = app.get_webview_window(WINDOW) {
-            let _ = w.set_always_on_top(true);
-        }
+        let _ = window.set_always_on_top(true);
     }
 }
 
@@ -173,15 +171,13 @@ fn on_menu(app: &AppHandle, id: &str) {
     }
 }
 
-/// 창의 "항상 위에"를 뒤집고 저장한다. 설정이 아직 열리지 않았으면 이번 실행에만 적용된다
+/// 창의 "항상 위에"를 뒤집고 저장한다
 fn toggle_on_top(app: &AppHandle) {
     let Some(w) = app.get_webview_window(WINDOW) else { return };
     let on = !w.is_always_on_top().unwrap_or(false);
     let _ = w.set_always_on_top(on);
-    if let Some(settings) = app.state::<crate::AppState>().settings.get() {
-        if let Err(e) = settings.set(ON_TOP_KEY, if on { "1" } else { "0" }) {
-            eprintln!("[wtboard] 항상 위에 설정을 저장할 수 없음: {e}");
-        }
+    if let Err(e) = app.state::<crate::AppState>().settings.set(ON_TOP_KEY, if on { "1" } else { "0" }) {
+        eprintln!("[wtboard] 항상 위에 설정을 저장할 수 없음: {e}");
     }
     // check 표시를 창 상태에 맞춘다
     crate::request_tray(app);
