@@ -217,10 +217,11 @@
 - 설정창(label `settings`, title `Settings`, 560×520 고정, 하나만)을 더했다. app menu `wtboard > Settings…`(`⌘,`)와 tray `설정…`가 연다. 기본 app menu(Edit 포함)는 그대로 두고 `Settings…`만 더했다. 닫기는 숨기기다.
 - Theme: Dark / Light. `state.sqlite` `settings`의 `theme`에 저장하고 `set_theme`이 모든 창의 native theme·배경색을 바꾼 뒤 `theme-changed`를 보낸다. 창을 만들 때 init script가 `<html data-theme>`을 정하므로 light로 저장하면 첫 frame부터 light다. light 화면은 `39f989c`의 화면을 되살렸고, component는 `<light class> dark:<dark class>`로 쓴다 (Tailwind `dark:` variant = `data-theme="dark"`).
 - 레포 관리: 설정창에서 추가(폴더 dialog, 하위 폴더 → worktree root, 이미 등록·git 아님 거절)·삭제(줄 안 확인, 미전송 코멘트 수 안내)·base 변경(`자동 (origin/…)`, remote branch, local branch). `config.toml`은 `toml_edit`로 그 entry만 고친다 (`core::store::config_edit`). `Registry::apply`가 재시작 없이 반영하고, 그대로인 레포는 다시 열지 않는다. 다시 연 worktree마다 `worktree-changed`(scope base)를 보내 파일 목록·diff를 다시 읽힌다.
-- 레포 0개(`config.toml` 없음 포함)는 오류가 아니다. main 창에 "등록된 레포가 없습니다"와 `Settings 열기`(`⌘,` 안내)가 보인다. parse에 실패하는 `config.toml`은 지금처럼 오류 화면이고 파일 경로를 보인다.
-- 창 크기 기억: main 창을 `setup`에서 만들고 `window_main`(logical rect)을 복원한다. `core::window_fit::fit`이 가장 많이 겹치는 모니터(없으면 primary)의 work area에 맞춰 줄이고 옮긴다. 사용자가 옮기거나 크기를 바꾼 뒤(0.5초 모아서, 종료 때 flush)에만 저장한다.
+- 레포 0개(`config.toml` 없음 포함)는 오류가 아니다. main 창에 "등록된 레포가 없습니다"와 `Settings 열기`(`⌘,` 안내)가 보인다. 등록은 있는데 하나도 열지 못하면 "열 수 있는 worktree가 없습니다. 왼쪽 아래 오류를 확인하세요."와 같은 버튼이다 (`list_repos`의 `configuredRepos`, `ui/src/lib/emptyScreen`). parse에 실패하는 `config.toml`은 지금처럼 오류 화면이고 파일 경로를 보인다.
+- 창 크기 기억: main 창을 `setup`에서 만들고 `window_main`(logical rect)을 복원한다. `core::window_fit::fit`이 가장 많이 겹치는 모니터(없으면 primary)의 work area에 맞춰 줄이고 옮긴다. 사용자가 옮기거나 크기를 바꾼 뒤(0.5초 모아서, 종료·창 닫기 때 flush)에만 저장한다. 모니터 구성이 baseline 때와 다르면 저장하지 않고 baseline을 다시 잡는다 (`window_fit::save_action`).
 - 새 command: `get_settings`, `set_theme`, `open_settings`, `list_repo_entries`, `list_base_candidates`, `add_repo`, `remove_repo`, `set_repo_base`. 새 event: `theme-changed`. 새 dependency: `toml_edit`(core), `tauri-plugin-dialog`(app). 새 환경 변수: `WTBOARD_PICK_FOLDER`(폴더 dialog 대신 그 경로, 자동 확인용).
-- 테스트: `pnpm test` = vitest 126개 + cargo 327개, `cargo test -p wtboard-hook` 56개 통과.
+- 테스트: `pnpm test` = vitest 129개 + cargo 338개, `cargo test -p wtboard-hook` 56개 통과.
+- final review에서 고친 것: 레포 추가는 파일 끝에 붙이기만 한다 (끝의 주석이 새 entry 아래로 가지 않는다). `config.toml`은 fsync 뒤 rename한다. 시작 때 registry를 열지 못했으면 설정창 동작이 파일을 쓰지 않고 `앱을 다시 시작해야 합니다`를 보인다. `apply` lock은 panic 뒤에도 쓸 수 있다. 등록은 있는데 하나도 열지 못한 화면을 "등록 없음"과 나눴다. 창을 옮기고 바로 닫아도 저장된다. 앱이 켜진 채 모니터 구성이 바뀌어 OS가 바꾼 rect는 저장하지 않는다. base select의 tooltip은 `자동`일 때만 보인다. Theme 선택 칸의 dark 색을 split/unified와 같은 `bg-gray-600`으로 맞췄다.
 - fixture(`WTBOARD_CONFIG`, `WTBOARD_PICK_FOLDER`)로 spec 완료 기준 6개를 실제 앱에서 처음부터 다시 확인했다 (2026-11-12, 외부 모니터 LG UltraFine 하나):
   - 설정창: app menu `Settings…`로 열린다. main 창을 앞으로 올리고 다시 누르면 새 창 없이 같은 설정창(같은 window id)이 앞으로 온다. 닫은(숨긴) 뒤 다시 열어도 같은 창이다. menu item의 단축키는 accessibility 속성으로 `⌘,`임을 확인했다 (키 자체는 누르지 않았다).
   - Theme: `Light` → main 창(배경, diff, syntax 색, title bar)과 설정창이 바로 light. 종료 뒤 다시 켜서 창이 생긴 직후부터 약 0.12초 간격 25장을 찍었고 첫 장(0.16초)부터 모두 light였다. 확인 뒤 `Dark`로 되돌렸다.
@@ -233,10 +234,10 @@
 
 - 설정창 닫기(`⌘W`, 빨간 버튼)는 숨기기다 (main 창과 같은 `CloseRequested` 처리). 숨겨 둔 사이 손으로 고친 `config.toml`이 보이게 설정창이 focus를 받을 때마다 목록을 다시 읽는다.
 - 폴더 dialog는 설정창의 sheet로 뜬다.
-- Theme 스위치의 선택된 칸은 mockup의 blue가 아니라 main 창의 split/unified control과 같은 색(dark `bg-gray-700`, light `bg-gray-800`)이다. `Settings 열기`는 main 창의 primary action과 같은 blue, 삭제 확인의 `삭제`만 red다.
+- Theme 스위치의 선택된 칸은 mockup의 blue가 아니라 main 창의 split/unified control과 같은 색(dark `bg-gray-600`, light `bg-gray-800`)이다. `Settings 열기`는 main 창의 primary action과 같은 blue, 삭제 확인의 `삭제`만 red다.
 - base 후보는 select를 처음 열 때가 아니라 목록을 읽을 때 모든 줄(열 수 있는 entry)을 미리 읽는다. native popup은 열린 동안 option이 늘어도 반영되지 않아, 키보드·accessibility로 바로 열면 `자동`만 보였다.
-- `window_main` 값은 JSON `{"x","y","width","height"}` (logical point). 위치는 title bar를 포함한 바깥 frame, 크기는 안쪽 크기다. 가로나 세로가 200 미만이면 저장 값이 없는 것으로 본다. 복원 기준(baseline)은 요청한 rect가 아니라 창을 만든 뒤 OS가 실제로 놓은 rect이고, 이것과 1pt 넘게 달라졌을 때만 저장한다. fullscreen·최소화·숨김 상태에서는 저장하지 않는다.
-- 종료 때 저장 대기 중이던 rect를 `RunEvent::ExitRequested`(tray `종료`)와 `RunEvent::Exit`(⌘Q, app menu Quit은 이것만 온다) 양쪽에서 flush한다.
+- `window_main` 값은 JSON `{"x","y","width","height"}` (logical point). 위치는 title bar를 포함한 바깥 frame, 크기는 안쪽 크기다. 가로나 세로가 200 미만이면 저장 값이 없는 것으로 본다. 복원 기준(baseline)은 요청한 rect가 아니라 창을 만든 뒤 OS가 실제로 놓은 rect이고, 이것과 1pt 넘게 달라졌을 때만 저장한다. fullscreen·최소화·숨김 상태에서는 저장하지 않는다. baseline과 함께 그때의 모니터 구성(work area·primary 목록)을 기억하고, 저장하려는 때 구성이 다르면 저장하지 않고 지금 rect와 구성을 baseline으로 삼는다 (메뉴바 앱이라 켜 둔 채 모니터를 뽑는 일이 흔하다).
+- 종료 때 저장 대기 중이던 rect를 `RunEvent::ExitRequested`(tray `종료`)와 `RunEvent::Exit`(⌘Q, app menu Quit은 이것만 온다) 양쪽에서 flush한다. main 창 닫기(숨기기) 직전에도 flush한다 (숨은 창은 저장하지 않으므로).
 - `SettingsStore`는 main thread의 `setup`에서 연다 (busy 최대 5초). 창 크기·theme을 창보다 먼저 알아야 하기 때문이다. 열지 못하면 메모리 store(dark, 1400×900)와 sidebar 경고다.
 - app menu와 tray의 `설정…`은 같은 menu id(`settings`)를 쓴다.
 - `update_file`은 `config.toml`이 symlink면 따라가서 target을 고친다 (dotfiles 레포 등).
@@ -256,6 +257,8 @@
 - [ ] tray `항상 위에 띄우기` 토글이 동작하고 재시작 뒤에도 유지된다.
 - [ ] tray `종료`로 끝냈을 때도 직전에 옮긴 창 rect가 저장된다.
 - [ ] 외부 모니터에서 창을 크게 키우고 종료 → 모니터 없이(MacBook만) 실행 → 창이 화면 안에 들어온다 → 그대로 종료 → 모니터 연결 뒤 실행 → 원래의 큰 크기로 돌아온다.
+- [ ] 앱을 켜 둔 채 외부 모니터를 뽑았다 꽂기 → 종료 → 외부 모니터에서 재실행 시 원래 큰 크기.
+- [ ] ⌘Q 직전에 옮긴 창 위치가 저장된다.
 - [ ] 설정창에서 `⌘C`/`⌘V`, main 창에서 `⌘=`/`⌘-`/`⌘0`이 그대로 동작한다 (app menu를 직접 구성했으므로).
 - [ ] light theme에서 쓰는 중인 코멘트(draft) widget, `다시 바뀜` badge, 빨간 오류 상태(봤음 저장 실패 등)의 색 (키 입력이 필요해 light screenshot으로 보지 못했다).
 
@@ -263,16 +266,12 @@
 
 - 레포를 삭제해도 hook은 등록 여부를 보지 않고 cwd의 worktree root로 미전송 코멘트를 찾으므로, 그 worktree에서 보낸 prompt에 미전송 코멘트가 계속 붙는다 (삭제 확인 줄이 `미전송 코멘트 n개가 남습니다`로 알린다).
 - 앱이 켜져 있는 동안 `config.toml`을 바깥에서 고친 것은 감시하지 않는다. 다시 시작해야 반영된다. 설정창의 동작은 매번 파일을 새로 읽으므로 그 내용을 덮어쓰지는 않지만, 그 동작의 `apply`가 바깥에서 고친 `[[repo]]`도 같이 반영한다. 이때 그대로 둔 레포는 `[watch] fallback_poll_secs` 변경을 반영하지 않는다.
-- 시작 때 `config.toml` parse에 실패해 오류 화면인 상태에서 손으로 고친 뒤 설정창에서 바꾸면, 파일은 쓰이지만 main 창은 옛 parse 오류를 계속 보인다. 앱을 다시 시작해야 한다.
-- 레포가 등록돼 있지만 하나도 열지 못하면(모두 경로 없음 등) main 창이 "등록된 레포가 없습니다"를 보인다 (sidebar 아래에는 entry 오류가 보인다).
-- main 창을 옮기거나 크기를 바꾸고 0.5초 안에 닫으면(숨기기) 그 rect가 저장되지 않는다.
 - `config.toml` 쓰기:
-  - 파일 끝의 주석(예: 주석 처리한 `[[repo]]` block)이 있으면 새 `[[repo]]`가 그 주석 위에 들어가 주석이 새 entry 아래로 간다.
   - entry를 지우면 그 entry 앞의 주석이 다음 table 위로 옮겨 간다. 마지막 entry를 지우면 파일 끝에 남는다.
-  - rename 전에 fsync하지 않는다 (crash 때 빈 파일이 남을 수 있다). crash 때 `config.toml.tmp<pid>`가 남을 수 있다. 가리키는 곳이 없는 symlink는 일반 파일로 바뀐다. 파일 권한은 새 파일 기본값(0644)이 된다.
+  - crash 때 `config.toml.tmp<pid>`가 남을 수 있다. 가리키는 곳이 없는 symlink는 일반 파일로 바뀐다. 파일 권한은 새 파일 기본값(0644)이 된다.
   - `repo = [{ path = "…" }]` inline 형식으로 쓴 파일에서는 추가·삭제·base 변경이 `설정 파일에 없는 레포` 오류다.
   - 같은 `path`의 entry가 둘이면 첫 번째만 고치고, 설정창 목록의 React key가 겹친다.
-- `Registry::apply` 중 panic이 나면 이후 설정창의 추가·삭제·base 변경이 모두 실패한다 (lock poison). `apply` 직후 잠깐 `list_repos`가 새 레포 목록과 옛 entry 오류를 같이 볼 수 있다 (다음 갱신에 맞춰진다).
+- `apply` 직후 잠깐 `list_repos`가 새 레포 목록과 옛 entry 오류를 같이 볼 수 있다 (다음 갱신에 맞춰진다).
 - `worktrees-updated`마다 설정창이 숨어 있어도 목록과 base 후보를 다시 읽는다.
 - 창 rect 맞추기는 안쪽 크기 기준이다. title bar 높이만큼 바깥 frame이 work area를 넘지 않는 것은 지금 창 설정에서 확인했다 (decoration을 바꾸면 다시 봐야 한다).
 
