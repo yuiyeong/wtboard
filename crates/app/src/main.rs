@@ -77,7 +77,7 @@ async fn list_repos(app: AppHandle) -> Result<ReposResponse, String> {
         }
         let auto_attach_comments =
             Config::load(&Config::default_path()).map_or(true, |c| c.review.auto_attach_comments);
-        Ok(ReposResponse { repos, errors: reg.errors().to_vec(), auto_attach_comments })
+        Ok(ReposResponse { repos, errors: reg.errors(), auto_attach_comments })
     })
     .await
 }
@@ -261,7 +261,7 @@ fn open_registry(handle: &AppHandle, settings_warning: Option<EntryError>) -> Re
     let _ = comments.purge_sent_before(cutoff);
     let state = handle.state::<AppState>();
     let _ = state.comments.set(Arc::new(comments));
-    let mut reg = Registry::open(&config, Gh::detect(), Arc::new(viewed), sink);
+    let reg = Registry::open(&config, Gh::detect(), Arc::new(viewed), sink);
     for w in [viewed_warning, comments_warning, settings_warning].into_iter().flatten() {
         reg.warn(w);
     }
