@@ -10,9 +10,15 @@ pub enum ConfigError {
     Io { path: PathBuf, source: std::io::Error },
     #[error("설정 파일 형식 오류: {0}")]
     Parse(#[from] toml::de::Error),
+    #[error("설정 파일을 쓸 수 없음: {path}: {source}")]
+    Write { path: PathBuf, source: std::io::Error },
+    #[error("설정 파일을 고칠 수 없음: {0}")]
+    Edit(#[from] toml_edit::TomlError),
+    #[error("설정 파일에 없는 레포: {0}")]
+    RepoNotFound(String),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct Config {
     #[serde(default, rename = "repo")]
     pub repos: Vec<RepoConfig>,
@@ -86,6 +92,15 @@ impl Config {
         let s = std::fs::read_to_string(path)
             .map_err(|source| ConfigError::Io { path: path.to_path_buf(), source })?;
         Self::parse(&s)
+    }
+
+    /// 파일이 없으면 빈 Config (설정창에서 처음 레포를 추가하는 경우). 깨진 파일은 그대로 Err
+    pub fn load_or_default(path: &Path) -> Result<Self, ConfigError> {
+        match std::fs::read_to_string(path) {
+            Ok(s) => Self::parse(&s),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(source) => Err(ConfigError::Io { path: path.to_path_buf(), source }),
+        }
     }
 
     pub fn default_path() -> PathBuf {

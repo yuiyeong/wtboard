@@ -2,7 +2,8 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::time::Duration;
 
-use wtboard_core::store::config::{config_path, expand_tilde, Config};
+use wtboard_core::store::config::{config_path, expand_tilde, Config, ConfigError};
+use wtboard_core::store::config_edit::{abbreviate_home, add_repo, remove_repo, set_repo_base, update_file};
 
 #[test]
 fn parses_repos_and_fills_defaults() {
@@ -79,4 +80,128 @@ fn hook_binary_path_follows_run_sh_rule() {
     assert_eq!(hook_binary_path(None, home), PathBuf::from("/Users/me/.wtboard/bin/wtboard-hook"));
     assert_eq!(hook_binary_path(Some(OsString::from("")), home), PathBuf::from("/Users/me/.wtboard/bin/wtboard-hook"));
     assert_eq!(hook_binary_path(Some(OsString::from("/tmp/h")), home), PathBuf::from("/tmp/h"));
+}
+
+const SRC: &str = r#"# base 생략 → origin/HEAD
+[[repo]]
+path = "~/a"
+
+[[repo]]
+path = "~/b"
+base = "origin/main"
+
+[review]
+auto_attach_comments = false
+"#;
+
+fn paths(cfg: &Config) -> Vec<&str> {
+    cfg.repos.iter().map(|r| r.path.as_str()).collect()
+}
+
+#[test]
+fn add_appends_repo_and_keeps_rest() {
+    let out = add_repo(SRC, "~/c").unwrap();
+    let cfg = Config::parse(&out).unwrap();
+    assert_eq!(paths(&cfg), ["~/a", "~/b", "~/c"]);
+    assert_eq!(cfg.repos[2].base, None);
+    assert!(!cfg.review.auto_attach_comments);
+    assert!(out.contains("# base 생략 → origin/HEAD"));
+    let mut rest = out.lines();
+    for line in SRC.lines() {
+        assert!(rest.any(|l| l == line), "줄이 없거나 순서가 바뀜: {line:?}\n{out}");
+    }
+}
+
+#[test]
+fn add_to_empty_source() {
+    let cfg = Config::parse(&add_repo("", "~/c").unwrap()).unwrap();
+    assert_eq!(paths(&cfg), ["~/c"]);
+}
+
+#[test]
+fn add_escapes_path() {
+    let path = "/Users/x/한글 폴더/a\"b\\c";
+    let cfg = Config::parse(&add_repo(SRC, path).unwrap()).unwrap();
+    assert_eq!(cfg.repos.last().unwrap().path, path);
+}
+
+#[test]
+fn remove_keeps_leading_comment() {
+    let out = remove_repo(SRC, "~/a").unwrap();
+    let cfg = Config::parse(&out).unwrap();
+    assert_eq!(paths(&cfg), ["~/b"]);
+    assert_eq!(cfg.repos[0].base.as_deref(), Some("origin/main"));
+    assert!(out.contains("# base 생략 → origin/HEAD"), "{out}");
+    assert!(out.contains("[review]\nauto_attach_comments = false"), "{out}");
+}
+
+#[test]
+fn remove_last_repo_leaves_valid_file() {
+    let out = remove_repo(&remove_repo(SRC, "~/a").unwrap(), "~/b").unwrap();
+    let cfg = Config::parse(&out).unwrap();
+    assert!(cfg.repos.is_empty());
+    assert!(!cfg.review.auto_attach_comments);
+    assert!(out.contains("# base 생략 → origin/HEAD"), "{out}");
+}
+
+#[test]
+fn set_base_writes_and_clears() {
+    let out = set_repo_base(SRC, "~/a", Some("origin/develop")).unwrap();
+    let cfg = Config::parse(&out).unwrap();
+    assert_eq!(cfg.repos[0].base.as_deref(), Some("origin/develop"));
+    assert_eq!(cfg.repos[1].base.as_deref(), Some("origin/main"));
+    let cfg = Config::parse(&set_repo_base(SRC, "~/b", None).unwrap()).unwrap();
+    assert_eq!(cfg.repos[1].base, None);
+}
+
+#[test]
+fn edit_unknown_repo_is_error() {
+    assert!(matches!(remove_repo(SRC, "~/zzz"), Err(ConfigError::RepoNotFound(p)) if p == "~/zzz"));
+    assert!(matches!(set_repo_base(SRC, "~/zzz", None), Err(ConfigError::RepoNotFound(p)) if p == "~/zzz"));
+}
+
+#[test]
+fn duplicate_path_edits_first() {
+    let src = "[[repo]]\npath = \"~/a\"\nbase = \"one\"\n\n[[repo]]\npath = \"~/a\"\nbase = \"two\"\n";
+    let cfg = Config::parse(&remove_repo(src, "~/a").unwrap()).unwrap();
+    assert_eq!(paths(&cfg), ["~/a"]);
+    assert_eq!(cfg.repos[0].base.as_deref(), Some("two"));
+}
+
+#[test]
+fn update_file_creates_missing_file_and_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("x/y/config.toml");
+    update_file(&file, |src| add_repo(src, "~/c")).unwrap();
+    assert_eq!(paths(&Config::load(&file).unwrap()), ["~/c"]);
+    let names: Vec<_> = std::fs::read_dir(file.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(names, ["config.toml"]);
+}
+
+#[test]
+fn update_file_refuses_broken_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("config.toml");
+    std::fs::write(&file, "[[repo").unwrap();
+    let err = update_file(&file, |src| add_repo(src, "~/c")).unwrap_err();
+    assert!(matches!(err, ConfigError::Parse(_)), "{err}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "[[repo");
+}
+
+#[test]
+fn load_or_default_missing_file_is_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(Config::load_or_default(&dir.path().join("none.toml")).unwrap().repos.is_empty());
+    let broken = dir.path().join("broken.toml");
+    std::fs::write(&broken, "[[repo").unwrap();
+    assert!(Config::load_or_default(&broken).is_err());
+}
+
+#[test]
+fn abbreviate_home_cases() {
+    let home = Path::new("/Users/jo");
+    assert_eq!(abbreviate_home(Path::new("/Users/jo/p/x"), home), "~/p/x");
+    assert_eq!(abbreviate_home(Path::new("/opt/x"), home), "/opt/x");
+    assert_eq!(abbreviate_home(Path::new("/Users/jo"), home), "~");
+    assert_eq!(abbreviate_home(Path::new("/Users/jo2/x"), home), "/Users/jo2/x");
 }

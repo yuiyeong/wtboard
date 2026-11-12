@@ -1,5 +1,6 @@
 pub mod comments;
 pub mod config;
+pub mod config_edit;
 pub mod db;
 pub mod settings;
 pub mod viewed;
